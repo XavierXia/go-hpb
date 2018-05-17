@@ -14,14 +14,14 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-package core
+package data
 
 import (
 	"math/big"
 
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/core/types"
-	"github.com/hpb-project/ghpb/core/vm"
+	"github.com/hpb-project/go-hpb/data/state"
+	"github.com/hpb-project/go-hpb/data/types"
+	"github.com/hpb-project/go-hpb/vm"
 )
 
 // Validator is an interface which defines the standard for block validation. It

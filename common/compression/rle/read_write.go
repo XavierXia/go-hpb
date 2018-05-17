@@ -21,7 +21,7 @@ import (
 	"bytes"
 	"errors"
 
-	"github.com/hpb-project/ghpb/common/crypto"
+	"github.com/hpb-project/go-hpb/common/crypto"
 )
 
 const (

@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-package core
+package data
 
 import (
 	"math/big"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/ghpb/common/crypto"
-	"github.com/hpb-project/ghpb/consensus"
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/core/types"
-	"github.com/hpb-project/ghpb/core/vm"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/constant"
+	"github.com/hpb-project/go-hpb/common/crypto"
+	"github.com/hpb-project/go-hpb/consensus"
+	"github.com/hpb-project/go-hpb/data/state"
+	"github.com/hpb-project/go-hpb/data/types"
+	"github.com/hpb-project/go-hpb/vm"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-package core
+package data
 
 import "errors"
 
@@ -32,8 +32,4 @@ var (
 	// ErrNonceTooHigh is returned if the nonce of a transaction is higher than the
 	// next one expected based on the local chain.
 	ErrNonceTooHigh = errors.New("nonce too high")
-
-	// ErrNonceTooLow is returned if the nonce of a transaction is lower than the
-	// one present in the local chain.
-	ErrNonceTooLow = errors.New("nonce too low")
 )

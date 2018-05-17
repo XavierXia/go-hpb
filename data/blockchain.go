@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-// Package core implements the Hpb consensus protocol.
-package core
+// package data implements the Hpb consensus protocol.
+package data
 
 import (
 	"errors"
@@ -27,20 +27,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/common/mclock"
-	"github.com/hpb-project/ghpb/consensus"
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/core/types"
-	"github.com/hpb-project/ghpb/core/vm"
-	"github.com/hpb-project/ghpb/common/crypto"
-	"github.com/hpb-project/ghpb/storage"
-	"github.com/hpb-project/ghpb/core/event"
-	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/ghpb/metrics"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/ghpb/common/rlp"
-	"github.com/hpb-project/ghpb/common/trie"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/mclock"
+	"github.com/hpb-project/go-hpb/consensus"
+	"github.com/hpb-project/go-hpb/data/state"
+	"github.com/hpb-project/go-hpb/data/types"
+	"github.com/hpb-project/go-hpb/vm"
+	"github.com/hpb-project/go-hpb/common/crypto"
+	"github.com/hpb-project/go-hpb/data/storage"
+	"github.com/hpb-project/go-hpb/event"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/metrics"
+	"github.com/hpb-project/go-hpb/common/constant"
+	"github.com/hpb-project/go-hpb/common/rlp"
+	"github.com/hpb-project/go-hpb/common/trie"
 	"github.com/hashicorp/golang-lru"
 )
 
@@ -153,6 +153,19 @@ func NewBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine co
 	}
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
+	}
+	// Check the current state of the block hashes and make sure that we do not have any of the bad blocks in our chain
+	for hash := range BadHashes {
+		if header := bc.GetHeaderByHash(hash); header != nil {
+			// get the canonical block corresponding to the offending header's number
+			headerByNumber := bc.GetHeaderByNumber(header.Number.Uint64())
+			// make sure the headerByNumber (if present) is in our current canonical chain
+			if headerByNumber != nil && headerByNumber.Hash() == header.Hash() {
+				log.Error("Found bad hash, rewinding chain", "number", header.Number, "hash", header.ParentHash)
+				bc.SetHead(header.Number.Uint64() - 1)
+				log.Error("Chain rewind was successful, resuming normal operation")
+			}
+		}
 	}
 	// Take ownership of this particular state
 	go bc.update()
@@ -898,6 +911,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		if atomic.LoadInt32(&bc.procInterrupt) == 1 {
 			log.Debug("Premature abort during blocks processing")
 			break
+		}
+		// If the header is a banned one, straight out abort
+		if BadHashes[block.Hash()] {
+			bc.reportBlock(block, nil, ErrBlacklistedHash)
+			return i, events, coalescedLogs, ErrBlacklistedHash
 		}
 		// Wait for the block's verification to complete
 		bstart := time.Now()

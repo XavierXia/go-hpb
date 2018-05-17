@@ -23,8 +23,8 @@ import (
 	"math/rand"
 	"reflect"
 
-	"github.com/hpb-project/ghpb/common/hexutil"
-	"github.com/hpb-project/ghpb/common/crypto/sha3"
+	"github.com/hpb-project/go-hpb/common/hexutil"
+	"github.com/hpb-project/go-hpb/common/crypto/sha3"
 )
 
 const (

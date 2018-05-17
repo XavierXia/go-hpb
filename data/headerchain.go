@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-package core
+package data
 
 import (
 	crand "crypto/rand"
@@ -25,12 +25,12 @@ import (
 	mrand "math/rand"
 	"time"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/consensus"
-	"github.com/hpb-project/ghpb/core/types"
-	"github.com/hpb-project/ghpb/storage"
-	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/ghpb/common/constant"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/consensus"
+	"github.com/hpb-project/go-hpb/data/types"
+	"github.com/hpb-project/go-hpb/data/storage"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/common/constant"
 	"github.com/hashicorp/golang-lru"
 )
 
@@ -229,11 +229,15 @@ func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header, checkFreq int)
 	defer close(abort)
 
 	// Iterate over the headers and ensure they all check out
-	for i := range chain {
+	for i, header := range chain {
 		// If the chain is terminating, stop processing blocks
 		if hc.procInterrupt() {
 			log.Debug("Premature abort during headers verification")
 			return 0, errors.New("aborted")
+		}
+		// If the header is a banned one, straight out abort
+		if BadHashes[header.Hash()] {
+			return i, ErrBlacklistedHash
 		}
 		// Otherwise wait for headers checks and ensure they pass
 		if err := <-results; err != nil {
