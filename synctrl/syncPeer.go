@@ -1,0 +1,40 @@
+// Copyright 2018 The go-hpb Authors
+// This file is part of the go-hpb.
+//
+// The go-hpb is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The go-hpb is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
+package synctrl
+
+import (
+//"crypto/rand"
+//"errors"
+//"fmt"
+//"math"
+//"math/big"
+//"sync"
+//"sync/atomic"
+//"time"
+//
+//hpbinter "github.com/hpb-project/ghpb/interface"
+//"github.com/hpb-project/ghpb/common"
+//"github.com/hpb-project/ghpb/core/types"
+//"github.com/hpb-project/ghpb/storage"
+//"github.com/hpb-project/ghpb/core/event"
+//"github.com/hpb-project/ghpb/common/log"
+//"github.com/hpb-project/ghpb/common/constant"
+//"github.com/rcrowley/go-metrics"
+)
+
+type syncPeer struct {
+
+}
