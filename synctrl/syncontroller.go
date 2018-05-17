@@ -13,28 +13,34 @@
 //
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
+
 package synctrl
 
 import (
-//"crypto/rand"
-//"errors"
-//"fmt"
-//"math"
-//"math/big"
-//"sync"
-//"sync/atomic"
-//"time"
-//
-//hpbinter "github.com/hpb-project/go-hpb/interface"
-//"github.com/hpb-project/go-hpb/common"
-//"github.com/hpb-project/go-hpb/data/types"
-//"github.com/hpb-project/go-hpb/data/storage"
-//"github.com/hpb-project/go-hpb/event"
-//"github.com/hpb-project/go-hpb/common/log"
-//"github.com/hpb-project/go-hpb/common/constant"
-//"github.com/rcrowley/go-metrics"
 )
 
 type synctrl struct {
+	peers map[string]*syncPeer
+	sch   *scheduler
+}
+
+func New(sh *scheduler) *synctrl {
+	return &synctrl{
+		sch : sh,
+	}
+}
+
+// RegisterPeer add a peer for synchronise
+func (this *synctrl) RegisterPeer(id string, peer *syncPeer)  {
+	this.peers[id] = peer
+}
+
+// UnRegisterPeer remove a peer for synchronise
+func (this *synctrl) UnRegisterPeer(id string)  {
+	delete(this.peers, id)
+}
+
+func (this *synctrl) Start() {
 
 }
+
