@@ -15,7 +15,7 @@
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
 // Package p2p implements the Hpb p2p network protocols.
-package p2p
+package peermanager
 
 import (
 	"crypto/ecdsa"
