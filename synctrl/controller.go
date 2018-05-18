@@ -17,29 +17,47 @@
 package synctrl
 
 import (
+	"github.com/hpb-project/ghpb/network/p2p"
+	"time"
+)
+
+const (
+	syncInterval        = 10 * time.Second // Time interval to syncs
 )
 
 type synctrl struct {
-	peers map[string]*syncPeer
-	sch   *scheduler
+	sch     *scheduler
+	syn     []*sync
+	newPeer chan interface{}
 }
 
 func New(sh *scheduler) *synctrl {
-	return &synctrl{
-		sch : sh,
+	ctrl := &synctrl{
+		sch    : sh,
+		newPeer: make(chan interface{}),
+	}
+
+	return ctrl
+}
+
+func (this *synctrl) Start() error {
+	defer this.Stop()
+
+	intervalSync := time.NewTicker(syncInterval)
+	defer intervalSync.Stop()
+	for {
+		select {
+		case peer := <-this.newPeer:
+			p, ok := peer.(*p2p.Peer) if ok {
+				go this.syn.start(p)
+			}
+		case <-intervalSync.C:
+			// Force a sync even if not enough peers are present
+			go this.syn.start(pm.peers.BestPeer())
+		}
 	}
 }
 
-// RegisterPeer add a peer for synchronise
-func (this *synctrl) RegisterPeer(id string, peer *syncPeer)  {
-	this.peers[id] = peer
-}
-
-// UnRegisterPeer remove a peer for synchronise
-func (this *synctrl) UnRegisterPeer(id string)  {
-	delete(this.peers, id)
-}
-
-func (this *synctrl) Start() {
-
+func (this *synctrl) Stop() {
+	close(this.newPeer)
 }

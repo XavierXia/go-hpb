@@ -13,12 +13,15 @@
 //
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
+
 package synctrl
 
 import (
 //"crypto/rand"
-//"errors"
-//"fmt"
+	"errors"
+	"github.com/hpb-project/ghpb/network/p2p"
+
+	//"fmt"
 //"math"
 //"math/big"
 //"sync"
@@ -33,8 +36,44 @@ import (
 //"github.com/hpb-project/go-hpb/common/log"
 //"github.com/hpb-project/go-hpb/common/constant"
 //"github.com/rcrowley/go-metrics"
+
 )
 
-type syncPeer struct {
+const (
+	FullSync  = iota          // Synchronise the entire blockchain history from full blocks
+	FastSync                  // Quickly download the headers, full sync only at the chain head
+)
 
+var (
+	errTimeout                 = errors.New("timeout")
+)
+
+type syncStrategy interface {
+	start(peer *p2p.Peer) error
+	stop()
+}
+
+type sync struct {
+	strategy   syncStrategy
+}
+
+func cSync(mod int, peer *p2p.Peer) *sync {
+	syn := &sync{
+	}
+	switch mod {
+	case FullSync:
+		syn.strategy = cFullsync()
+	case FastSync:
+		syn.strategy = cFastsync()
+	default:
+		syn.strategy = nil
+	}
+
+	return syn
+}
+
+func (this *sync) start(peer *p2p.Peer) error {
+	if this.strategy != nil {
+		return this.strategy.start(peer)
+	}
 }

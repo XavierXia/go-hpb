@@ -18,7 +18,7 @@ package synctrl
 
 import (
 //"crypto/rand"
-	"errors"
+//"errors"
 //"fmt"
 //"math"
 //"math/big"
@@ -34,44 +34,30 @@ import (
 //"github.com/hpb-project/go-hpb/common/log"
 //"github.com/hpb-project/go-hpb/common/constant"
 //"github.com/rcrowley/go-metrics"
-
+	"github.com/hpb-project/ghpb/network/p2p"
 )
 
-const (
-	FullSync  = iota          // Synchronise the entire blockchain history from full blocks
-	FastSync                  // Quickly download the headers, full sync only at the chain head
-)
 
-var (
-	errTimeout                 = errors.New("timeout")
-)
-
-type syncStrategy interface {
-	start() error
-	stop()
+type fullSyncSty struct {
+	dataHead chan packet
+	dataBody chan packet
 }
 
-type sync struct {
-	strategy   syncStrategy
-	peerId     string
-}
-
-func CSync(mod int, id string) *sync {
-	syn := &sync{
-		peerId:id,
-	}
-	switch mod {
-	case FullSync:
-		syn.strategy = cFullsync(id)
-	case FastSync:
-		syn.strategy = cFastsync(id)
-	default:
-		syn.strategy = nil
-	}
-
-	if syn.strategy != nil {
-		syn.strategy.start()
+func cFullsync() *fullSyncSty {
+	syn := &fullSyncSty{
+		dataHead: make(chan packet, 1),
+		dataBody: make(chan packet, 1),
 	}
 
 	return syn
+}
+
+func (full *fullSyncSty) start(peer *p2p.Peer) error {
+
+	err := errTimeout
+	return err
+}
+
+func (full *fullSyncSty) stop() {
+
 }

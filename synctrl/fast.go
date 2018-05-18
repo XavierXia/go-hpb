@@ -34,31 +34,33 @@ import (
 //"github.com/hpb-project/go-hpb/common/log"
 //"github.com/hpb-project/go-hpb/common/constant"
 //"github.com/rcrowley/go-metrics"
+	"github.com/hpb-project/ghpb/network/p2p"
 )
 
-
-type fullSyncSty struct {
-	peerId   string
-	dataHead chan packet
-	dataBody chan packet
+type fastSyncSty struct {
+	dataHead    chan packet
+	dataBody    chan packet
+	dataReceipt chan packet
+	dataState   chan packet
 }
 
-func cFullsync(id string) *fullSyncSty {
-	syn := &fullSyncSty{
-		dataHead: make(chan packet, 1),
-		dataBody: make(chan packet, 1),
-		peerId  : id,
+func cFastsync() *fastSyncSty {
+	syn := &fastSyncSty{
+		dataHead    : make(chan packet, 1),
+		dataBody    : make(chan packet, 1),
+		dataReceipt : make(chan packet, 1),
+		dataState   : make(chan packet, 1),
 	}
 
 	return syn
 }
 
-func (full *fullSyncSty) start() error {
+func (fast *fastSyncSty) start(peer *p2p.Peer) error {
 
 	err := errTimeout
 	return err
 }
 
-func (full *fullSyncSty) stop() {
+func (fast *fastSyncSty) stop() {
 
 }
