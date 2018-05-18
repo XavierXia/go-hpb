@@ -53,7 +53,7 @@ func (this *synctrl) Start() error {
 			}
 		case <-intervalSync.C:
 			// Force a sync even if not enough peers are present
-			go this.syn.start(pm.peers.BestPeer())
+			go this.syn.start(peermanager.Instance().BestPeer())
 		}
 	}
 }
