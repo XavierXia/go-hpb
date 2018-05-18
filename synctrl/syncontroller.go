@@ -43,4 +43,3 @@ func (this *synctrl) UnRegisterPeer(id string)  {
 func (this *synctrl) Start() {
 
 }
-
