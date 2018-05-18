@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/hpb-project/ghpb/core/event"
-	"github.com/hpb-project/ghpb/network/p2p/discover"
+	"github.com/hpb-project/ghpb/network/p2p/nodetable"
 	"github.com/hpb-project/ghpb/common/rlp"
 )
 
@@ -280,13 +280,13 @@ type msgEventer struct {
 	MsgReadWriter
 
 	feed     *event.Feed
-	peerID   discover.NodeID
+	peerID   nodetable.NodeID
 	Protocol string
 }
 
 // newMsgEventer returns a msgEventer which sends message events to the given
 // feed
-func newMsgEventer(rw MsgReadWriter, feed *event.Feed, peerID discover.NodeID, proto string) *msgEventer {
+func newMsgEventer(rw MsgReadWriter, feed *event.Feed, peerID nodetable.NodeID, proto string) *msgEventer {
 	return &msgEventer{
 		MsgReadWriter: rw,
 		feed:          feed,

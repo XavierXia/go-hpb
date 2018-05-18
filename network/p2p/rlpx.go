@@ -39,7 +39,7 @@ import (
 	"github.com/hpb-project/ghpb/common/crypto/ecies"
 	"github.com/hpb-project/ghpb/common/crypto/secp256k1"
 	"github.com/hpb-project/ghpb/common/crypto/sha3"
-	"github.com/hpb-project/ghpb/network/p2p/discover"
+	"github.com/hpb-project/ghpb/network/p2p/nodetable"
 	"github.com/hpb-project/ghpb/common/rlp"
 	"github.com/golang/snappy"
 )
@@ -163,13 +163,13 @@ func readProtocolHandshake(rw MsgReader, our *protoHandshake) (*protoHandshake, 
 	if err := msg.Decode(&hs); err != nil {
 		return nil, err
 	}
-	if (hs.ID == discover.NodeID{}) {
+	if (hs.ID == nodetable.NodeID{}) {
 		return nil, DiscInvalidIdentity
 	}
 	return &hs, nil
 }
 
-func (t *rlpx) doEncHandshake(prv *ecdsa.PrivateKey, dial *discover.Node) (discover.NodeID, error) {
+func (t *rlpx) doEncHandshake(prv *ecdsa.PrivateKey, dial *nodetable.Node) (nodetable.NodeID, error) {
 	var (
 		sec secrets
 		err error
@@ -180,7 +180,7 @@ func (t *rlpx) doEncHandshake(prv *ecdsa.PrivateKey, dial *discover.Node) (disco
 		sec, err = initiatorEncHandshake(t.fd, prv, dial.ID, nil)
 	}
 	if err != nil {
-		return discover.NodeID{}, err
+		return nodetable.NodeID{}, err
 	}
 	t.wmu.Lock()
 	t.rw = newRLPXFrameRW(t.fd, sec)
@@ -191,7 +191,7 @@ func (t *rlpx) doEncHandshake(prv *ecdsa.PrivateKey, dial *discover.Node) (disco
 // encHandshake contains the state of the encryption handshake.
 type encHandshake struct {
 	initiator bool
-	remoteID  discover.NodeID
+	remoteID  nodetable.NodeID
 
 	remotePub            *ecies.PublicKey  // remote-pubk
 	initNonce, respNonce []byte            // nonce
@@ -202,7 +202,7 @@ type encHandshake struct {
 // secrets represents the connection secrets
 // which are negotiated during the encryption handshake.
 type secrets struct {
-	RemoteID              discover.NodeID
+	RemoteID              nodetable.NodeID
 	AES, MAC              []byte
 	EgressMAC, IngressMAC hash.Hash
 	Token                 []byte
@@ -274,7 +274,7 @@ func (h *encHandshake) staticSharedSecret(prv *ecdsa.PrivateKey) ([]byte, error)
 // it should be called on the dialing side of the connection.
 //
 // prv is the local client's private key.
-func initiatorEncHandshake(conn io.ReadWriter, prv *ecdsa.PrivateKey, remoteID discover.NodeID, token []byte) (s secrets, err error) {
+func initiatorEncHandshake(conn io.ReadWriter, prv *ecdsa.PrivateKey, remoteID nodetable.NodeID, token []byte) (s secrets, err error) {
 	h := &encHandshake{initiator: true, remoteID: remoteID}
 	authMsg, err := h.makeAuthMsg(prv, token)
 	if err != nil {

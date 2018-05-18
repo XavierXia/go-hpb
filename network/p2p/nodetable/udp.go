@@ -227,8 +227,6 @@ type reply struct {
 type Gather struct {
 	LightTab     *Table
 	AccessTab    *Table
-	CommCrowd    *Crowd
-	PreCommCrowd *Crowd
 }
 
 type commInfo struct {
@@ -297,24 +295,13 @@ func newUDP(priv *ecdsa.PrivateKey, ourRole uint8, c conn, natm nat.Interface, n
 		lvlDb : db,
 	}
 
-	light, err := newTable(ci, LightRole)
+	light, err := newTable(ci, LightNode)
 	ga.LightTab = light
 	if err != nil {
 		return ga, nil, err
 	}
-	access, err := newTable(ci, AccessRole)
+	access, err := newTable(ci, PreNode)
 	ga.AccessTab = access
-	if err != nil {
-		return ga, nil, err
-	}
-
-	comm, err := newCrowd(ci, HpRole)
-	ga.CommCrowd = comm
-	if err != nil {
-		return ga, nil, err
-	}
-	pre, err := newCrowd(ci, PreRole)
-	ga.PreCommCrowd = pre
 	if err != nil {
 		return ga, nil, err
 	}
@@ -607,16 +594,16 @@ func decodePacket(buf []byte) (packet, NodeID, uint8, uint8, uint8, []byte, erro
 	// +2, the first byte is pkt type(Stay consistent with the previous implementation)
 	// the second byte represents node role
 	if len(buf) < headSize + 3 {
-		return nil, NodeID{}, tableService, UnKnowRole, UnKnowRole, nil, errPacketTooSmall
+		return nil, NodeID{}, tableService, UnKnowNode, UnKnowNode, nil, errPacketTooSmall
 	}
 	hash, sig, sigData := buf[:macSize], buf[macSize:headSize], buf[headSize:]
 	shouldHash := crypto.Keccak256(buf[macSize:])
 	if !bytes.Equal(hash, shouldHash) {
-		return nil, NodeID{}, tableService, UnKnowRole, UnKnowRole, nil, errBadHash
+		return nil, NodeID{}, tableService, UnKnowNode, UnKnowNode, nil, errBadHash
 	}
 	fromID, err := recoverNodeID(crypto.Keccak256(buf[headSize:]), sig)
 	if err != nil {
-		return nil, NodeID{}, tableService, UnKnowRole, UnKnowRole, hash, err
+		return nil, NodeID{}, tableService, UnKnowNode, UnKnowNode, hash, err
 	}
 	nodeRole := sigData[1]
 	forRole := sigData[2]
@@ -655,16 +642,16 @@ func (req *ping) handle(t *udp, from *net.UDPAddr, fromID NodeID, workFor uint8,
 		if workFor == tableService {
 			// Note: we're ignoring the provided IP address right now
 			switch fromRole {
-			case BootRole:
+			case BootNode:
 				switch forRole {
-				case LightRole:
+				case LightNode:
 					go t.lightTab.bond(true, fromID, fromRole, from, req.From.TCP)
-				case AccessRole:
+				case PreNode:
 					go t.accessTab.bond(true, fromID, fromRole, from, req.From.TCP)
 				}
-			case LightRole:
+			case LightNode:
 				go t.lightTab.bond(true, fromID, fromRole, from, req.From.TCP)
-			case AccessRole:
+			case PreNode:
 				go t.accessTab.bond(true, fromID, fromRole, from, req.From.TCP)
 			default:
 			}
@@ -693,9 +680,9 @@ func (req *findnode) handle(t *udp, from *net.UDPAddr, fromID NodeID, workFor ui
 		return errExpired
 	}
 	switch forRole {
-	case LightRole:
+	case LightNode:
 		err := req.sendNeibors(t, from, t.lightTab, fromID, fromRole, forRole); if err != nil {return err}
-	case AccessRole:
+	case PreNode:
 		err := req.sendNeibors(t, from, t.accessTab, fromID, fromRole, forRole); if err != nil {return err}
 	default:
 	}
@@ -722,7 +709,7 @@ func expired(ts uint64) bool {
 
 func (req *findnode)sendNeibors(trans *udp, from *net.UDPAddr, table *Table, fromID NodeID, fromRole uint8, forRole uint8) error {
 	// TODO by xujl: because no HpRole and PreRole Table, so don't need confirm in tab.db
-	if fromRole != HpRole && fromRole != PreRole {
+	if fromRole != HpNode{
 		if table.db.node(fromID, nodeDBDiscoverRoot) == nil {
 			// No bond exists, we don't process the packet. This prevents
 			// an attack vector where the discovery protocol could be used

@@ -39,12 +39,11 @@ const NodeIDBits = 512
 
 //node roles
 const(
-	UnKnowRole uint8 = 0
-	BootRole         = 1
-	LightRole        = 2
-	AccessRole       = 3
-	HpRole           = 4
-	PreRole          = 5
+	UnKnowNode uint8 = 0x00
+	BootNode         = 0x01
+	HpNode           = 0x10
+	PreNode          = 0x20
+	LightNode        = 0x30
 )
 // Node represents a host on the network.
 // The fields of Node may not be modified.
@@ -158,7 +157,7 @@ func ParseNode(rawurl string) (*Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid node ID (%v)", err)
 		}
-		return NewNode(id, UnKnowRole, nil, 0, 0), nil
+		return NewNode(id, UnKnowNode, nil, 0, 0), nil
 	}
 
 	if m := incompleteNodeURLWithRole.FindStringSubmatch(rawurl); m != nil {
@@ -171,7 +170,7 @@ func ParseNode(rawurl string) (*Node, error) {
 		} else {
 			return nil, fmt.Errorf("invalid node Role (%v)", err)
 		}
-		return NewNode(id, UnKnowRole, nil, 0, 0), nil
+		return NewNode(id, UnKnowNode, nil, 0, 0), nil
 	}
 	// not end with hex string
 	return parseComplete(rawurl)
@@ -497,7 +496,7 @@ func nodesDuplicate(nodes []*Node) []*Node {
 func filterBootNodes(nodes []*Node) []*Node {
 	var x []*Node
 	for _, i := range nodes {
-		if i.Role == BootRole {
+		if i.Role == BootNode {
 			continue
 		}
 		x = append(x, i)

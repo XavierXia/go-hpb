@@ -309,7 +309,7 @@ func (tab *Table) lookup(targetID NodeID, refreshIfEmpty bool) []*Node {
 					// Prevent the attacker from tampering with the code and sending it to an incorrect neighbor.
 					var rcr []*Node
 					for _, n := range r {
-						if n.Role == tab.roleType || n.Role == BootRole {
+						if n.Role == tab.roleType || n.Role == BootNode {
 							rcr = append(rcr, n)
 						}
 					}
@@ -453,7 +453,7 @@ func (tab *Table) closestByNoBootNode(target common.Hash, nresults int) *nodesBy
 	close := &nodesByDistance{target: target}
 	for _, b := range tab.buckets {
 		for _, n := range b.entries {
-			if n.Role != BootRole {
+			if n.Role != BootNode {
 				close.push(n, nresults)
 			}
 		}
