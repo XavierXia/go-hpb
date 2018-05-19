@@ -20,6 +20,7 @@ package data
 import (
 	"errors"
 	"fmt"
+	"github.com/ontio/ontology/common/config"
 	"io"
 	"math/big"
 	mrand "math/rand"
@@ -45,8 +46,9 @@ import (
 )
 
 var (
+	reentryMux sync.Mutex
+	singletonInstance *BlockChain
 	blockInsertTimer = metrics.NewTimer("chain/inserts")
-
 	ErrNoGenesis = errors.New("Genesis not found in chain")
 )
 
@@ -116,10 +118,22 @@ type BlockChain struct {
 	badBlocks *lru.Cache // Bad block cache
 }
 
-// NewBlockChain returns a fully initialised block chain using information
+// InstanceBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Hpb Validator and
 // Processor.
-func NewBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
+func InstanceBlockChain() (*BlockChain) {
+	if nil == singletonInstance {
+		reentryMux.Lock()
+		if  nil == singletonInstance {
+			singletonInstance, err = newBlockChain(hpbdb.ChainDbInstance(), config.GetChainCfg, consensus.engine.InstanceEngine(), config.GetVmConfig())
+		}
+		reentryMux.Unlock()
+	}
+
+	return singletonInstance
+}
+
+func newBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
 	bodyCache, _ := lru.New(bodyCacheLimit)
 	bodyRLPCache, _ := lru.New(bodyCacheLimit)
 	blockCache, _ := lru.New(blockCacheLimit)

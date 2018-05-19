@@ -17,8 +17,9 @@
 package synctrl
 
 import (
-	"github.com/hpb-project/ghpb/network/p2p"
 	"time"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/network/p2p"
 )
 
 const (
@@ -31,7 +32,7 @@ type synctrl struct {
 	newPeer chan interface{}
 }
 
-func New(sh *scheduler) *synctrl {
+func NewSynCtrl(sh *scheduler) *synctrl {
 	ctrl := &synctrl{
 		sch    : sh,
 		newPeer: make(chan interface{}),
@@ -43,14 +44,36 @@ func New(sh *scheduler) *synctrl {
 func (this *synctrl) Start() error {
 	defer this.Stop()
 
+	// broadcast
+	go this.txTransLoop()
+	go this.minedTransLoop()
+
+	// start sync handlers
+	go this.syncBlock()
+	go this.txRelayLoop()
+}
+
+func (this *synctrl) txTransLoop() {
+
+}
+
+func (this *synctrl) minedTransLoop() {
+
+}
+
+func (this *synctrl) txRelayLoop() {
+
+}
+
+func (this *synctrl) syncBlock() {
 	intervalSync := time.NewTicker(syncInterval)
 	defer intervalSync.Stop()
 	for {
 		select {
 		case peer := <-this.newPeer:
 			p, ok := peer.(*p2p.Peer) if ok {
-				go this.syn.start(p)
-			}
+			go this.syn.start(p)
+		}
 		case <-intervalSync.C:
 			// Force a sync even if not enough peers are present
 			go this.syn.start(peermanager.Instance().BestPeer())
@@ -59,5 +82,6 @@ func (this *synctrl) Start() error {
 }
 
 func (this *synctrl) Stop() {
-	close(this.newPeer)
+
+	log.Info("Hpb protocol stopped")
 }
