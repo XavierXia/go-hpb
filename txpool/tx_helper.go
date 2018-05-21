@@ -36,5 +36,5 @@ func SubmitRawTx(encodedTx hexutil.Bytes) (common.Hash, error) {
 
 //SignTx use local keystore sign transaction.
 func SignTx(transaction *types.Transaction){
-	
+
 }
