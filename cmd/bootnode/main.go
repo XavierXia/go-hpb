@@ -22,8 +22,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"io"
-	"runtime"
 
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/common/log"
@@ -56,29 +54,29 @@ func main() {
 
 	natm, err := nat.Parse(*natdesc)
 	if err != nil {
-		Fatalf("-nat: %v", err)
+		netutil.Fatalf("-nat: %v", err)
 	}
 	switch {
 	case *genKey != "":
 		nodeKey, err = crypto.GenerateKey()
 		if err != nil {
-			Fatalf("could not generate key: %v", err)
+			netutil.Fatalf("could not generate key: %v", err)
 		}
 		if err = crypto.SaveECDSA(*genKey, nodeKey); err != nil {
-			Fatalf("%v", err)
+			netutil.Fatalf("%v", err)
 		}
 		return
 	case *nodeKeyFile == "" && *nodeKeyHex == "":
-		Fatalf("Use -nodekey or -nodekeyhex to specify a private key")
+		netutil.Fatalf("Use -nodekey or -nodekeyhex to specify a private key")
 	case *nodeKeyFile != "" && *nodeKeyHex != "":
-		Fatalf("Options -nodekey and -nodekeyhex are mutually exclusive")
+		netutil.Fatalf("Options -nodekey and -nodekeyhex are mutually exclusive")
 	case *nodeKeyFile != "":
 		if nodeKey, err = crypto.LoadECDSA(*nodeKeyFile); err != nil {
-			Fatalf("-nodekey: %v", err)
+			netutil.Fatalf("-nodekey: %v", err)
 		}
 	case *nodeKeyHex != "":
 		if nodeKey, err = crypto.HexToECDSA(*nodeKeyHex); err != nil {
-			Fatalf("-nodekeyhex: %v", err)
+			netutil.Fatalf("-nodekeyhex: %v", err)
 		}
 	}
 
@@ -91,32 +89,14 @@ func main() {
 	if *netrestrict != "" {
 		restrictList, err = netutil.ParseNetlist(*netrestrict)
 		if err != nil {
-			Fatalf("-netrestrict: %v", err)
+			netutil.Fatalf("-netrestrict: %v", err)
 		}
 	}
 
 	if _, err := discover.ListenUDP(nodeKey, *listenAddr, natm, "", restrictList); err != nil {
-		Fatalf("%v", err)
+		netutil.Fatalf("%v", err)
 	}
 
 	select {}
-}
-
-
-func Fatalf(format string, args ...interface{}) {
-	w := io.MultiWriter(os.Stdout, os.Stderr)
-	if runtime.GOOS == "windows" {
-		// The SameFile check below doesn't work on Windows.
-		// stdout is unlikely to get redirected though, so just print there.
-		w = os.Stdout
-	} else {
-		outf, _ := os.Stdout.Stat()
-		errf, _ := os.Stderr.Stat()
-		if outf != nil && errf != nil && os.SameFile(outf, errf) {
-			w = os.Stderr
-		}
-	}
-	fmt.Fprintf(w, "Fatal: "+format+"\n", args...)
-	os.Exit(1)
 }
 
