@@ -152,16 +152,18 @@ func NewTxPool(config TxPoolConfig, chainId *big.Int) *TxPool {
 	//1.Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
 	//2.Create the transaction pool with its initial settings
+	mockBlockChain := MockBlockChain()
 	pool := &TxPool{
 		config:      config,
-		signer:      types.NewEIP155Signer(chainId),
 		pending:     make(map[common.Address]*txList),
 		queue:       make(map[common.Address]*txList),
 		beats:       make(map[common.Address]time.Time),
 		all:         make(map[common.Hash]*types.Transaction),
 		gasPrice:    new(big.Int).SetUint64(config.PriceLimit),
-		blockChain:  new(blockChain),
-		chainHeadCh: make(chan core.ChainHeadEvent),
+		//FIXME
+		blockChain:  mockBlockChain,
+		signer:      types.NewEIP155Signer(mockBlockChain.Config().ChainId),
+		chainHeadCh: make(chan core.ChainHeadEvent, 10),
 	}
 	//3.start main process loop
 	pool.wg.Add(1)
@@ -172,7 +174,7 @@ func NewTxPool(config TxPoolConfig, chainId *big.Int) *TxPool {
 //Stop the transaction pool.
 func (pool *TxPool) Stop() {
 	//1.stop main process loop
-	pool.stopCh <- struct{}{}
+	close(pool.stopCh)
 	//2.wait quit
 	pool.wg.Wait()
 }
@@ -206,8 +208,8 @@ func (pool *TxPool) loop() {
 				pool.mu.Unlock()
 			}
 			// Be unsubscribed due to system stopped
-		//case <-pool.chainHeadSub.Err():
-		//	return
+			//case <-pool.chainHeadSub.Err():
+			//	return
 
 			// Handle stats reporting ticks
 		case <-report.C:
@@ -232,6 +234,10 @@ func (pool *TxPool) loop() {
 				}
 			}
 			pool.mu.Unlock()
+
+			//stop signal
+		case <-pool.stopCh:
+			break
 		}
 	}
 }
