@@ -19,7 +19,7 @@ package p2p
 import (
 	"runtime/debug"
 
-	"github.com/hpb-project/ghpb/network/p2p/nodetable"
+	"github.com/hpb-project/ghpb/network/p2p/discover"
 	"github.com/hpb-project/ghpb/common/log"
 )
 
@@ -33,7 +33,6 @@ const(
 	NtAccess   NodeType = 0x40
 	NtLight    NodeType = 0x50
 )
-
 // NodeType to string
 func (pt NodeType)String() string {
 	switch pt {
@@ -59,20 +58,20 @@ func (pt NodeType)Uint8() uint8 {
 
 // Convert NodeType to discover role
 func (pt NodeType)ToDiscv() uint8 {
-	disc := nodetable.UnKnowNode
+	disc := discover.UnKnowRole
 	switch pt {
 	case NtUnknown:
-		disc = nodetable.UnKnowNode
+		disc = discover.UnKnowRole
 	case NtPublic:
-		disc = nodetable.BootNode
+		disc = discover.BootRole
 	case NtHpnode:
-		disc = nodetable.HpNode
+		disc = discover.HpRole
 	case NtPrenode:
-		disc = nodetable.HpNode
+		disc = discover.PreRole
 	case NtAccess:
-		disc = nodetable.PreNode
+		disc = discover.AccessRole
 	case NtLight:
-		disc = nodetable.LightNode
+		disc = discover.LightRole
 	}
 	return disc
 }
@@ -80,13 +79,15 @@ func (pt NodeType)ToDiscv() uint8 {
 // Convert uint8 to NodeType
 func Uint8ToNodeType(discNt uint8) NodeType {
 	switch discNt {
-	case nodetable.BootNode:
+	case discover.BootRole:
 		return NtPublic
-	case nodetable.HpNode:
+	case discover.HpRole:
 		return NtHpnode
-	case nodetable.PreNode:
+	case discover.PreRole:
+		return NtPrenode
+	case discover.AccessRole:
 		return NtAccess
-	case nodetable.LightNode:
+	case discover.LightRole:
 		return NtLight
 	}
 	log.Debug("NodeType unknown ","uint8",discNt, "stack",debug.Stack())

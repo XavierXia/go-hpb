@@ -341,7 +341,7 @@ func TestNodeDBExpiration(t *testing.T) {
 		t.Fatalf("failed to expire nodes: %v", err)
 	}
 	for i, seed := range nodeDBExpirationNodes {
-		node := db.node(seed.node.ID, nodeDBDiscoverRoot)
+		node := db.node(seed.node.ID)
 		if (node == nil && !seed.exp) || (node != nil && seed.exp) {
 			t.Errorf("node %d: expiration mismatch: have %v, want %v", i, node, seed.exp)
 		}

@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/hpb-project/ghpb/network/p2p/nodetable"
+	"github.com/hpb-project/ghpb/network/p2p/discover"
 	"github.com/hpb-project/ghpb/network/p2p/netutil"
 )
 
