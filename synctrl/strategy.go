@@ -17,31 +17,12 @@
 package synctrl
 
 import (
-//"crypto/rand"
 	"errors"
-	"github.com/hpb-project/ghpb/network/p2p"
-
-	//"fmt"
-//"math"
-//"math/big"
-//"sync"
-//"sync/atomic"
-//"time"
-//
-//hpbinter "github.com/hpb-project/go-hpb/interface"
-//"github.com/hpb-project/go-hpb/common"
-//"github.com/hpb-project/go-hpb/data/types"
-//"github.com/hpb-project/go-hpb/data/storage"
-//"github.com/hpb-project/go-hpb/event"
-//"github.com/hpb-project/go-hpb/common/log"
-//"github.com/hpb-project/go-hpb/common/constant"
-//"github.com/rcrowley/go-metrics"
-
 )
 
 const (
-	FullSync  = iota          // Synchronise the entire blockchain history from full blocks
-	FastSync                  // Quickly download the headers, full sync only at the chain head
+	FullSync  = iota           // Synchronise the entire blockchain history from full blocks
+	FastSync                   // Quickly download the headers, full sync only at the chain head
 )
 
 var (
@@ -49,7 +30,7 @@ var (
 )
 
 type syncStrategy interface {
-	start(peer *p2p.Peer) error
+	start(peer *p2p.Peer)
 	stop()
 }
 
@@ -72,8 +53,8 @@ func cSync(mod int, peer *p2p.Peer) *sync {
 	return syn
 }
 
-func (this *sync) start(peer *p2p.Peer) error {
+func (this *sync) start(peer *p2p.Peer) {
 	if this.strategy != nil {
-		return this.strategy.start(peer)
+		this.strategy.start(peer)
 	}
 }

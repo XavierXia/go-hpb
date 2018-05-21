@@ -14,13 +14,11 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-// package data implements the Hpb consensus protocol.
 package data
 
 import (
 	"errors"
 	"fmt"
-	"github.com/ontio/ontology/common/config"
 	"io"
 	"math/big"
 	mrand "math/rand"

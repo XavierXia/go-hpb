@@ -17,24 +17,6 @@
 package synctrl
 
 import (
-//"crypto/rand"
-//"errors"
-//"fmt"
-//"math"
-//"math/big"
-//"sync"
-//"sync/atomic"
-//"time"
-//
-//hpbinter "github.com/hpb-project/go-hpb/interface"
-//"github.com/hpb-project/go-hpb/common"
-//"github.com/hpb-project/go-hpb/data/types"
-//"github.com/hpb-project/go-hpb/data/storage"
-//"github.com/hpb-project/go-hpb/event"
-//"github.com/hpb-project/go-hpb/common/log"
-//"github.com/hpb-project/go-hpb/common/constant"
-//"github.com/rcrowley/go-metrics"
-	"github.com/hpb-project/ghpb/network/p2p"
 )
 
 type fastSyncSty struct {
@@ -55,10 +37,8 @@ func cFastsync() *fastSyncSty {
 	return syn
 }
 
-func (fast *fastSyncSty) start(peer *p2p.Peer) error {
-
-	err := errTimeout
-	return err
+func (fast *fastSyncSty) start(peer *p2p.Peer) {
+	return
 }
 
 func (fast *fastSyncSty) stop() {

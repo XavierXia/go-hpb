@@ -17,24 +17,8 @@
 package synctrl
 
 import (
-//"crypto/rand"
-//"errors"
-//"fmt"
-//"math"
-//"math/big"
-//"sync"
-//"sync/atomic"
-//"time"
-//
-//hpbinter "github.com/hpb-project/go-hpb/interface"
-//"github.com/hpb-project/go-hpb/common"
-//"github.com/hpb-project/go-hpb/data/types"
-//"github.com/hpb-project/go-hpb/data/storage"
-//"github.com/hpb-project/go-hpb/event"
-//"github.com/hpb-project/go-hpb/common/log"
-//"github.com/hpb-project/go-hpb/common/constant"
-//"github.com/rcrowley/go-metrics"
-	"github.com/hpb-project/ghpb/network/p2p"
+	"github.com/hpb-project/go-hpb/data"
+	"sync/atomic"
 )
 
 
@@ -52,10 +36,26 @@ func cFullsync() *fullSyncSty {
 	return syn
 }
 
-func (full *fullSyncSty) start(peer *p2p.Peer) error {
+func (this *fullSyncSty) start(peer *p2p.Peer) {
+	if peer == nil {
+		return
+	}
+	currentBlock := data.InstanceBlockChain().CurrentBlock()
+	td := data.InstanceBlockChain().GetTd(currentBlock.Hash(), currentBlock.NumberU64())
 
-	err := errTimeout
-	return err
+	pHead, pTd := peer.Head()
+
+	if pTd.Cmp(td) <= 0 {
+		return
+	}
+	err := this.Synchronise(peer.id, pHead, pTd)
+	if err != nil {
+		return
+	}
+	atomic.StoreUint32(&pm.acceptTxs, 1)
+	if head := data.InstanceBlockChain().CurrentBlock(); head.NumberU64() > 0 {
+		go this.BroadcastBlock(head, false)
+	}
 }
 
 func (full *fullSyncSty) stop() {
