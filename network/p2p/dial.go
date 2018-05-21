@@ -50,7 +50,7 @@ const (
 // NodeDialer is used to connect to nodes in the network, typically by using
 // an underlying net.Dialer but also using net.Pipe in tests
 type NodeDialer interface {
-	Dial(*nodetable.Node) (net.Conn, error)
+	Dial(*discover.Node) (net.Conn, error)
 }
 
 // TCPDialer implements the NodeDialer interface by using a net.Dialer to
@@ -60,7 +60,7 @@ type TCPDialer struct {
 }
 
 // Dial creates a TCP connection to the node
-func (t TCPDialer) Dial(dest *nodetable.Node) (net.Conn, error) {
+func (t TCPDialer) Dial(dest *discover.Node) (net.Conn, error) {
 	addr := &net.TCPAddr{IP: dest.IP, Port: int(dest.TCP)}
 	return t.Dialer.Dial("tcp", addr.String())
 }
@@ -70,8 +70,7 @@ func (t TCPDialer) Dial(dest *nodetable.Node) (net.Conn, error) {
 // of the main loop in Server.run.
 type dialstate struct {
 	maxDynDials int
-	ntbLight   discoverTable
-	ntbAccess  discoverTable
+	ntab        discoverTable
 	netrestrict *netutil.Netlist
 
 	lookupRunning bool
@@ -91,16 +90,6 @@ type discoverTable interface {
 	Resolve(target discover.NodeID) *discover.Node
 	Lookup(target discover.NodeID) []*discover.Node
 	ReadRandomNodes([]*discover.Node) int
-	Findout(target discover.NodeID) *discover.Node
-
-}
-
-type discoverStatic interface{
-	Self() *discover.Node
-	Close()
-	Fetch() []*discover.Node
-	Delete(n *discover.Node)
-	Add(n *discover.Node)
 }
 
 // the dial history remembers recent dials.
@@ -138,11 +127,10 @@ type waitExpireTask struct {
 	time.Duration
 }
 
-func newDialState(static []*discover.Node, bootnodes []*discover.Node, ntabLit discoverTable,ntabAcc discoverTable, maxdyn int, netrestrict *netutil.Netlist) *dialstate {
+func newDialState(static []*discover.Node, bootnodes []*discover.Node, ntab discoverTable, maxdyn int, netrestrict *netutil.Netlist) *dialstate {
 	s := &dialstate{
 		maxDynDials: maxdyn,
-		ntbLight:    ntabLit,
-		ntbAccess:   ntabAcc,
+		ntab:        ntab,
 		netrestrict: netrestrict,
 		static:      make(map[discover.NodeID]*dialTask),
 		dialing:     make(map[discover.NodeID]connFlag),
@@ -210,43 +198,27 @@ func (s *dialstate) newTasks(nRunning int, peers map[discover.NodeID]*Peer, now 
 		case nil:
 			s.dialing[id] = t.flags
 			newtasks = append(newtasks, t)
-			log.Debug("P2P Dial add task to candidate(static)", "NodeType",Uint8ToNodeType(t.dest.Role).String(),"id", t.dest.ID, "addr", &net.TCPAddr{IP: t.dest.IP, Port: int(t.dest.TCP)})
 		}
 	}
 	// If we don't have any peers whatsoever, try to dial a random bootnode. This
 	// scenario is useful for the testnet (and private networks) where the discovery
 	// table might be full of mostly bad peers, making it hard to find good ones.
-	/*
 	if len(peers) == 0 && len(s.bootnodes) > 0 && needDynDials > 0 && now.Sub(s.start) > fallbackInterval {
 		bootnode := s.bootnodes[0]
 		s.bootnodes = append(s.bootnodes[:0], s.bootnodes[1:]...)
 		s.bootnodes = append(s.bootnodes, bootnode)
 
 		if addDial(dynDialedConn, bootnode) {
-			log.Debug("P2P Dial add task to candidate(bootnodes)", "NodeType",Uint8ToNodeType(bootnode.Role).String(),"id", bootnode.ID, "addr", &net.TCPAddr{IP: bootnode.IP, Port: int(bootnode.TCP)})
 			needDynDials--
 		}
 	}
-	*/
 	// Use random nodes from the table for half of the necessary
 	// dynamic dials.
-	// todo hpb: find node form different bucket
 	randomCandidates := needDynDials / 2
 	if randomCandidates > 0 {
-		//access node table first
-		n := s.ntbAccess.ReadRandomNodes(s.randomNodes)
+		n := s.ntab.ReadRandomNodes(s.randomNodes)
 		for i := 0; i < randomCandidates && i < n; i++ {
 			if addDial(dynDialedConn, s.randomNodes[i]) {
-				log.Debug("P2P Dial add task to candidate(rand-access)", "NodeType",Uint8ToNodeType(s.randomNodes[i].Role).String(),"id", s.randomNodes[i].ID, "addr", &net.TCPAddr{IP: s.randomNodes[i].IP, Port: int(s.randomNodes[i].TCP)})
-				needDynDials--
-			}
-		}
-
-		//then light node table
-		m := s.ntbLight.ReadRandomNodes(s.randomNodes)
-		for i := 0; i < randomCandidates && i < m; i++ {
-			if addDial(dynDialedConn, s.randomNodes[i]) {
-				log.Debug("P2P Dial add task to candidate(rand-light)", "NodeType",Uint8ToNodeType(s.randomNodes[i].Role).String(),"id", s.randomNodes[i].ID, "addr", &net.TCPAddr{IP: s.randomNodes[i].IP, Port: int(s.randomNodes[i].TCP)})
 				needDynDials--
 			}
 		}
@@ -256,7 +228,6 @@ func (s *dialstate) newTasks(nRunning int, peers map[discover.NodeID]*Peer, now 
 	i := 0
 	for ; i < len(s.lookupBuf) && needDynDials > 0; i++ {
 		if addDial(dynDialedConn, s.lookupBuf[i]) {
-			log.Debug("P2P Dial add task to candidate(lookup)", "NodeType",Uint8ToNodeType(s.lookupBuf[i].Role).String(),"id", s.lookupBuf[i].ID, "addr", &net.TCPAddr{IP: s.lookupBuf[i].IP, Port: int(s.lookupBuf[i].TCP)})
 			needDynDials--
 		}
 	}
@@ -293,9 +264,7 @@ func (s *dialstate) checkDial(n *discover.Node, peers map[discover.NodeID]*Peer)
 		return errAlreadyDialing
 	case peers[n.ID] != nil:
 		return errAlreadyConnected
-	case s.ntbLight != nil && n.ID == s.ntbLight.Self().ID:
-		return errSelf
-	case s.ntbAccess != nil && n.ID == s.ntbAccess.Self().ID:
+	case s.ntab != nil && n.ID == s.ntab.Self().ID:
 		return errSelf
 	case s.netrestrict != nil && !s.netrestrict.Contains(n.IP):
 		return errNotWhitelisted
@@ -317,21 +286,15 @@ func (s *dialstate) taskDone(t task, now time.Time) {
 }
 
 func (t *dialTask) Do(srv *Server) {
-
-	ntab := srv.ntabAccess
-	if Uint8ToNodeType(t.dest.Role) == NtLight {
-		ntab = srv.ntabLight
-	}
-
 	if t.dest.Incomplete() {
-		if !t.resolve(ntab) {
+		if !t.resolve(srv) {
 			return
 		}
 	}
 	success := t.dial(srv, t.dest)
 	// Try resolving the ID of static nodes if dialing failed.
 	if !success && t.flags&staticDialedConn != 0 {
-		if t.resolve(ntab) {
+		if t.resolve(srv) {
 			t.dial(srv, t.dest)
 		}
 	}
@@ -343,8 +306,8 @@ func (t *dialTask) Do(srv *Server) {
 // Resolve operations are throttled with backoff to avoid flooding the
 // discovery network with useless queries for nodes that don't exist.
 // The backoff delay resets when the node is found.
-func (t *dialTask) resolve(ntab discoverTable) bool {
-	if ntab == nil {
+func (t *dialTask) resolve(srv *Server) bool {
+	if srv.ntab == nil {
 		log.Debug("Can't resolve node", "id", t.dest.ID, "err", "discovery is disabled")
 		return false
 	}
@@ -354,7 +317,7 @@ func (t *dialTask) resolve(ntab discoverTable) bool {
 	if time.Since(t.lastResolved) < t.resolveDelay {
 		return false
 	}
-	resolved := ntab.Resolve(t.dest.ID)
+	resolved := srv.ntab.Resolve(t.dest.ID)
 	t.lastResolved = time.Now()
 	if resolved == nil {
 		t.resolveDelay *= 2
@@ -373,46 +336,13 @@ func (t *dialTask) resolve(ntab discoverTable) bool {
 
 // dial performs the actual connection attempt.
 func (t *dialTask) dial(srv *Server, dest *discover.Node) bool {
-
-	//to check
-	remotetype := Uint8ToNodeType(dest.Role)
-	if !t.isAllowDial(srv,remotetype) {
-		log.Debug("Do not allowed to dial","RemoteIP",dest.IP.String())
-		return false
-	}
-
 	fd, err := srv.Dialer.Dial(dest)
 	if err != nil {
-		log.Debug("P2P Dial error", "task", t, "err", err)
+		log.Trace("Dial error", "task", t, "err", err)
 		return false
 	}
-
-	log.Debug("P2P Dial success","RemoteIP",dest.IP.String())
 	mfd := newMeteredConn(fd, false)
 	srv.SetupConn(mfd, t.flags, dest)
-	return true
-}
-
-func (t *dialTask) isAllowDial(srv *Server, remote NodeType) bool {
-
-	local  :=srv.local
-	if remote == NtUnknown {
-		log.Debug("Dial dest node type refresh from discover", "RemoteType",remote.String())
-		return false
-	}
-
-	// todo hpb: all type of peers number control
-
-	if local == NtLight && remote == NtHpnode {
-		log.Debug("Dial is not allowed", "LocalType",local.String(),"RemoteType",remote.String())
-		return false
-	}
-
-	if local == NtLight && remote == NtPrenode {
-		log.Debug("Dial is not allowed", "LocalType",local.String(),"RemoteType",remote.String())
-		return false
-	}
-
 	return true
 }
 
@@ -431,28 +361,7 @@ func (t *discoverTask) Do(srv *Server) {
 	srv.lastLookup = time.Now()
 	var target discover.NodeID
 	rand.Read(target[:])
-	//combine light table and access table results
-	results := srv.ntabAccess.Lookup(target)
-	if srv.local == NtLight {
-		//t.results = srv.ntabAccess.Lookup(target)
-	}else if srv.local == NtAccess {
-		results = append(results,srv.ntabLight.Lookup(target)...)
-		//t.results = srv.ntabLight.Lookup(target)
-		//t.results = append(t.results,srv.ntabAccess.Lookup(target)...)
-	}else if srv.local == NtHpnode || srv.local == NtPrenode {
-		//t.results = srv.ntabAccess.Lookup(target)
-	}
-
-	for i:=0; i < len(results); i++ {
-		if Uint8ToNodeType(results[i].Role) == NtPublic {
-			log.Debug("P2P Dial discover lookup", "NO",i,"NodeType",Uint8ToNodeType(results[i].Role).String(),"id", results[i].ID, "addr", &net.TCPAddr{IP: results[i].IP, Port: int(results[i].TCP)})
-			continue
-		}
-
-		t.results = append(t.results,results[i])
-		log.Debug("P2P Dial discover lookup", "NO",i,"NodeType",Uint8ToNodeType(results[i].Role).String(),"id", results[i].ID, "addr", &net.TCPAddr{IP: results[i].IP, Port: int(results[i].TCP)})
-	}
-
+	t.results = srv.ntab.Lookup(target)
 }
 
 func (t *discoverTask) String() string {
