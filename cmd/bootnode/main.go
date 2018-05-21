@@ -22,13 +22,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"io"
+	"runtime"
 
-	"github.com/hpb-project/ghpb/cmd/utils"
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/ghpb/network/p2p/nodetable"
 	"github.com/hpb-project/ghpb/network/p2p/nat"
 	"github.com/hpb-project/ghpb/network/p2p/netutil"
+	"github.com/hpb-project/ghpb/network/p2p/discover"
 )
 
 func main() {
@@ -55,34 +56,34 @@ func main() {
 
 	natm, err := nat.Parse(*natdesc)
 	if err != nil {
-		utils.Fatalf("-nat: %v", err)
+		Fatalf("-nat: %v", err)
 	}
 	switch {
 	case *genKey != "":
 		nodeKey, err = crypto.GenerateKey()
 		if err != nil {
-			utils.Fatalf("could not generate key: %v", err)
+			Fatalf("could not generate key: %v", err)
 		}
 		if err = crypto.SaveECDSA(*genKey, nodeKey); err != nil {
-			utils.Fatalf("%v", err)
+			Fatalf("%v", err)
 		}
 		return
 	case *nodeKeyFile == "" && *nodeKeyHex == "":
-		utils.Fatalf("Use -nodekey or -nodekeyhex to specify a private key")
+		Fatalf("Use -nodekey or -nodekeyhex to specify a private key")
 	case *nodeKeyFile != "" && *nodeKeyHex != "":
-		utils.Fatalf("Options -nodekey and -nodekeyhex are mutually exclusive")
+		Fatalf("Options -nodekey and -nodekeyhex are mutually exclusive")
 	case *nodeKeyFile != "":
 		if nodeKey, err = crypto.LoadECDSA(*nodeKeyFile); err != nil {
-			utils.Fatalf("-nodekey: %v", err)
+			Fatalf("-nodekey: %v", err)
 		}
 	case *nodeKeyHex != "":
 		if nodeKey, err = crypto.HexToECDSA(*nodeKeyHex); err != nil {
-			utils.Fatalf("-nodekeyhex: %v", err)
+			Fatalf("-nodekeyhex: %v", err)
 		}
 	}
 
 	if *writeAddr {
-		fmt.Printf("%v\n", nodetable.PubkeyID(&nodeKey.PublicKey))
+		fmt.Printf("%v\n", discover.PubkeyID(&nodeKey.PublicKey))
 		os.Exit(0)
 	}
 
@@ -90,13 +91,32 @@ func main() {
 	if *netrestrict != "" {
 		restrictList, err = netutil.ParseNetlist(*netrestrict)
 		if err != nil {
-			utils.Fatalf("-netrestrict: %v", err)
+			Fatalf("-netrestrict: %v", err)
 		}
 	}
 
-	if _, err := nodetable.ListenUDP(nodeKey, *listenAddr, natm, "", restrictList); err != nil {
-		utils.Fatalf("%v", err)
+	if _, err := discover.ListenUDP(nodeKey, *listenAddr, natm, "", restrictList); err != nil {
+		Fatalf("%v", err)
 	}
 
 	select {}
 }
+
+
+func Fatalf(format string, args ...interface{}) {
+	w := io.MultiWriter(os.Stdout, os.Stderr)
+	if runtime.GOOS == "windows" {
+		// The SameFile check below doesn't work on Windows.
+		// stdout is unlikely to get redirected though, so just print there.
+		w = os.Stdout
+	} else {
+		outf, _ := os.Stdout.Stat()
+		errf, _ := os.Stderr.Stat()
+		if outf != nil && errf != nil && os.SameFile(outf, errf) {
+			w = os.Stderr
+		}
+	}
+	fmt.Fprintf(w, "Fatal: "+format+"\n", args...)
+	os.Exit(1)
+}
+

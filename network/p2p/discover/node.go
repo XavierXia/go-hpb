@@ -33,6 +33,7 @@ import (
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/common/crypto/secp256k1"
+	"runtime/debug"
 )
 
 const NodeIDBits = 512
@@ -430,3 +431,27 @@ func hashAtDistance(a common.Hash, n int) (b common.Hash) {
 	}
 	return b
 }
+
+///////////////////////////////////////////////////////////////
+// NodeType is node type used in peer management
+const(
+	LightNode  uint8 = 0x00
+	PreNode    uint8 = 0x30
+	HpNode     uint8 = 0x60
+	BootNode   uint8 = 0x90
+)
+
+func NodeTypeString(nt uint8) string {
+	switch nt {
+	case LightNode:
+		return "LightNode"
+	case PreNode:
+		return "PreNode"
+	case HpNode:
+		return "HpNode"
+	case BootNode:
+		return "BootNode"
+	}
+	return "UnknownNode"
+}
+
