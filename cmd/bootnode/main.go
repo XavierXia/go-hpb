@@ -23,10 +23,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hpb-project/ghpb/command/utils"
+	"github.com/hpb-project/ghpb/cmd/utils"
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/ghpb/network/p2p/discover"
+	"github.com/hpb-project/ghpb/network/p2p/nodetable"
 	"github.com/hpb-project/ghpb/network/p2p/nat"
 	"github.com/hpb-project/ghpb/network/p2p/netutil"
 )
@@ -35,7 +35,6 @@ func main() {
 	var (
 		listenAddr  = flag.String("addr", ":30301", "listen address for find light nodes")
 		genKey      = flag.String("genkey", "", "generate a node key")
-		Role        = flag.Uint  ("role", uint(discover.BootRole), "role type of node")
 		writeAddr   = flag.Bool  ("writeaddress", false, "write out the node's pubkey hash and quit")
 		nodeKeyFile = flag.String("nodekey", "", "private key filename")
 		nodeKeyHex  = flag.String("nodekeyhex", "", "private key as hex (for testing)")
@@ -83,7 +82,7 @@ func main() {
 	}
 
 	if *writeAddr {
-		fmt.Printf("%v\n", discover.PubkeyID(&nodeKey.PublicKey))
+		fmt.Printf("%v\n", nodetable.PubkeyID(&nodeKey.PublicKey))
 		os.Exit(0)
 	}
 
@@ -95,7 +94,7 @@ func main() {
 		}
 	}
 
-	if _, err := discover.ListenUDP(nodeKey, uint8(*Role), *listenAddr, natm, "", restrictList); err != nil {
+	if _, err := nodetable.ListenUDP(nodeKey, *listenAddr, natm, "", restrictList); err != nil {
 		utils.Fatalf("%v", err)
 	}
 
