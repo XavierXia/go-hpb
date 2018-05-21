@@ -50,7 +50,7 @@ const (
 // NodeDialer is used to connect to nodes in the network, typically by using
 // an underlying net.Dialer but also using net.Pipe in tests
 type NodeDialer interface {
-	Dial(*discover.Node) (net.Conn, error)
+	Dial(*nodetable.Node) (net.Conn, error)
 }
 
 // TCPDialer implements the NodeDialer interface by using a net.Dialer to
@@ -60,7 +60,7 @@ type TCPDialer struct {
 }
 
 // Dial creates a TCP connection to the node
-func (t TCPDialer) Dial(dest *discover.Node) (net.Conn, error) {
+func (t TCPDialer) Dial(dest *nodetable.Node) (net.Conn, error) {
 	addr := &net.TCPAddr{IP: dest.IP, Port: int(dest.TCP)}
 	return t.Dialer.Dial("tcp", addr.String())
 }
