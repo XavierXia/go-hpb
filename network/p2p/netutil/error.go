@@ -16,6 +16,30 @@
 
 package netutil
 
+import (
+
+)
+
+type errid uint32
+
+type errCode struct {
+	code errid
+	text string
+}
+
+func New(cd errid,text string) errCode {
+	return errCode{cd,text}
+}
+
+func (ec *errCode)ID()errid  {
+	return ec.code
+}
+
+func (ec *errCode)String()string  {
+	return ec.text
+}
+
+
 // IsTemporaryError checks whether the given error should be considered temporary.
 func IsTemporaryError(err error) bool {
 	tempErr, ok := err.(interface {
