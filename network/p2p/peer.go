@@ -481,6 +481,25 @@ func (p *Peer) Info() *PeerInfo {
 
 
 
+// Head retrieves a copy of the current head hash and total difficulty of the
+// peer.
+func (p *Peer) Head() (hash common.Hash, td *big.Int) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	copy(hash[:], p.head[:])
+	return hash, new(big.Int).Set(p.td)
+}
+
+// SetHead updates the head hash and total difficulty of the peer.
+func (p *Peer) SetHead(hash common.Hash, td *big.Int) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	copy(p.head[:], hash[:])
+	p.td.Set(td)
+}
+
 ///////////////////////////////////////////////////////////////
 //Peers Set
 

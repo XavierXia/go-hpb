@@ -23,8 +23,8 @@ import (
 
 
 type PeerManager struct {
-	peers      *peerSet
-	protocols []p2p.Protocol
+	peers    *peerSet
+	prots    []Protocol
 }
 
 //
