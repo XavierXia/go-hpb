@@ -29,6 +29,9 @@ import (
 	"github.com/hpb-project/ghpb/common/log"
 	"github.com/hpb-project/ghpb/network/p2p/discover"
 	"github.com/hpb-project/ghpb/common/rlp"
+	"github.com/hpb-project/ghpb/common"
+	"math/big"
+	"gopkg.in/fatih/set.v0"
 )
 
 const (
@@ -112,6 +115,17 @@ type Peer struct {
 
 	local  NodeType
 	remote NodeType
+
+	id string
+	version uint
+
+	head common.Hash
+	td  *big.Int
+	lock sync.RWMutex
+
+	knownTxs  *set.Set
+	knownBlocks *set.Set
+
 }
 
 // NewPeer returns a peer for testing purposes.
