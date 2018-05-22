@@ -30,6 +30,7 @@ import (
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/ghpb/core/event"
 	"github.com/hpb-project/ghpb/core"
+	"sync/atomic"
 )
 
 var (
@@ -99,6 +100,8 @@ var DefaultTxPoolConfig = TxPoolConfig{
 	Lifetime: 3 * time.Minute,
 }
 
+var INSTANCE = atomic.Value{}
+
 // blockChain provides the state of blockchain and current gas limit to do
 // some pre checks in tx pool and event subscribers.
 type blockChain interface {
@@ -148,7 +151,10 @@ type TxPool struct {
 }
 
 //Create the transaction pool and start main process loop.
-func NewTxPool(config TxPoolConfig, chainId *big.Int) *TxPool {
+func NewTxPool(config TxPoolConfig) *TxPool {
+	if INSTANCE.Load() != nil {
+		return INSTANCE.Load().(*TxPool)
+	}
 	//1.Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
 	//2.Create the transaction pool with its initial settings
@@ -168,7 +174,16 @@ func NewTxPool(config TxPoolConfig, chainId *big.Int) *TxPool {
 	//3.start main process loop
 	pool.wg.Add(1)
 	go pool.loop()
+	INSTANCE.Store(pool)
 	return pool
+}
+
+func GetTxPool() *TxPool {
+	if INSTANCE.Load() != nil {
+		return INSTANCE.Load().(*TxPool)
+	}
+	//Please init txpool
+	return nil
 }
 
 //Stop the transaction pool.
@@ -351,6 +366,23 @@ func (pool *TxPool) AddTxsLocked(txs []*types.Transaction) error {
 	return nil
 }
 
+// addTx enqueues a single transaction into the pool if it is valid.
+func (pool *TxPool) AddTxLocked(tx *types.Transaction) error {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	// Try to inject the transaction and update any state
+	replace, err := pool.add(tx)
+	if err != nil {
+		return err
+	}
+	// If we added a new transaction, run promotion checks and return
+	if !replace {
+		from, _ := types.Sender(pool.signer, tx) // already validated
+		pool.promoteExecutables([]common.Address{from})
+	}
+	return nil
+}
 // add validates a transaction and inserts it into the non-executable queue for
 // later pending promotion and execution. If the transaction is a replacement for
 // an already pending or queued one, it overwrites the previous and returns this
