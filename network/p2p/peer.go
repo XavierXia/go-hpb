@@ -113,8 +113,7 @@ type Peer struct {
 	// events receives message send / receive events if set
 	events *event.Feed
 
-	local  NodeType
-	remote NodeType
+	remote uint8 //远端节点类型
 
 	id string
 	version uint
@@ -164,14 +163,10 @@ func (p *Peer) LocalAddr() net.Addr {
 }
 
 //  RemoteType returns the remote type of the node.
-func (p *Peer) RemoteType() NodeType {
+func (p *Peer) RemoteType() uint8 {
 	return p.remote
 }
 
-// LocalType returns the local type of the node.
-func (p *Peer) LocalType() NodeType {
-	return p.local
-}
 
 // Disconnect terminates the peer connection with the given reason.
 // It returns immediately and does not wait until the connection is closed.
@@ -457,7 +452,7 @@ func (p *Peer) Info() *PeerInfo {
 	info := &PeerInfo{
 		ID:        p.ID().String(),
 		Name:      p.Name(),
-		Remote:    p.remote.String(),
+		Remote:    discover.NodeType2String(p.remote),
 		Caps:      caps,
 		Protocols: make(map[string]interface{}),
 	}

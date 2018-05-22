@@ -33,7 +33,6 @@ import (
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/common/crypto/secp256k1"
-	"runtime/debug"
 )
 
 const NodeIDBits = 512
@@ -441,7 +440,7 @@ const(
 	BootNode   uint8 = 0x90
 )
 
-func NodeTypeString(nt uint8) string {
+func NodeType2String(nt uint8) string {
 	switch nt {
 	case LightNode:
 		return "LightNode"
