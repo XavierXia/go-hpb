@@ -9,6 +9,11 @@ import (
 	"github.com/hpb-project/ghpb/core/vm"
 	"github.com/hpb-project/ghpb/core/state"
 	"github.com/hpb-project/ghpb/core/types"
+	"path/filepath"
+	"io/ioutil"
+	"os"
+	"github.com/hpb-project/go-hpb/account"
+	"github.com/hpb-project/go-hpb/account/keystore"
 )
 
 func MockBlockChain() *core.BlockChain {
@@ -35,4 +40,48 @@ func (bproc) ValidateState(block, parent *types.Block, state *state.StateDB, rec
 }
 func (bproc) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, *big.Int, error) {
 	return nil, nil, new(big.Int), nil
+}
+
+var datadirDefaultKeyStore = "keystore"           // Path within the datadir to the keystore
+
+func MockAccountManager(useLightweightKDF bool,keyStoreDir string,dataDir string) (*accounts.Manager, string, error) {
+	scryptN := keystore.StandardScryptN
+	scryptP := keystore.StandardScryptP
+	if useLightweightKDF {
+		scryptN = keystore.LightScryptN
+		scryptP = keystore.LightScryptP
+	}
+
+	var (
+		keydir    string
+		ephemeral string
+		err       error
+	)
+	switch {
+	case filepath.IsAbs(keyStoreDir):
+		keydir = keyStoreDir
+	case dataDir != "":
+		if keyStoreDir == "" {
+			keydir = filepath.Join(dataDir, datadirDefaultKeyStore)
+		} else {
+			keydir, err = filepath.Abs(keyStoreDir)
+		}
+	case keyStoreDir != "":
+		keydir, err = filepath.Abs(keyStoreDir)
+	default:
+		// There is no datadir.
+		keydir, err = ioutil.TempDir("", "ghpb-keystore")
+		ephemeral = keydir
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if err := os.MkdirAll(keydir, 0700); err != nil {
+		return nil, "", err
+	}
+	// Assemble the account manager and supported backends
+	backends := []accounts.Backend{
+		keystore.NewKeyStore(keydir, scryptN, scryptP),
+	}
+	return accounts.NewManager(backends...), ephemeral, nil
 }

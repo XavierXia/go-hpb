@@ -22,16 +22,11 @@ import (
 	"sync"
 
 	"github.com/hpb-project/ghpb/core/event"
-	"path/filepath"
-	"io/ioutil"
-	"os"
-	"github.com/hpb-project/go-hpb/account/keystore"
 	"sync/atomic"
-	"github.com/hpb-project/ghpb/node"
 )
 
-var datadirDefaultKeyStore = "keystore"           // Path within the datadir to the keystore
 var INSTANCE = atomic.Value{}
+
 // Manager is an overarching account manager that can communicate with various
 // backends for signing transactions.
 type Manager struct {
@@ -49,6 +44,9 @@ type Manager struct {
 // NewManager creates a generic account manager to sign transaction via various
 // supported backends.
 func NewManager(backends ...Backend) *Manager {
+	if INSTANCE.Load() != nil {
+		return GetManager()
+	}
 	// Subscribe to wallet notifications from all backends
 	updates := make(chan WalletEvent, 4*len(backends))
 
@@ -74,6 +72,8 @@ func NewManager(backends ...Backend) *Manager {
 		am.backends[kind] = append(am.backends[kind], backend)
 	}
 	go am.update()
+
+	INSTANCE.Store(am)
 
 	return am
 }
@@ -207,55 +207,14 @@ func drop(slice []Wallet, wallets ...Wallet) []Wallet {
 	return slice
 }
 
-func makeAccountManager(useLightweightKDF bool,keyStoreDir string,dataDir string) (*Manager, string, error) {
-	scryptN := keystore.StandardScryptN
-	scryptP := keystore.StandardScryptP
-	if useLightweightKDF {
-		scryptN = keystore.LightScryptN
-		scryptP = keystore.LightScryptP
-	}
-
-	var (
-		keydir    string
-		ephemeral string
-		err       error
-	)
-	switch {
-	case filepath.IsAbs(keyStoreDir):
-		keydir = keyStoreDir
-	case dataDir != "":
-		if keyStoreDir == "" {
-			keydir = filepath.Join(dataDir, datadirDefaultKeyStore)
-		} else {
-			keydir, err = filepath.Abs(keyStoreDir)
-		}
-	case keyStoreDir != "":
-		keydir, err = filepath.Abs(keyStoreDir)
-	default:
-		// There is no datadir.
-		keydir, err = ioutil.TempDir("", "ghpb-keystore")
-		ephemeral = keydir
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	if err := os.MkdirAll(keydir, 0700); err != nil {
-		return nil, "", err
-	}
-	// Assemble the account manager and supported backends
-	backends := []Backend{
-		keystore.NewKeyStore(keydir, scryptN, scryptP),
-	}
-	return NewManager(backends...), ephemeral, nil
-}
-
 func GetManager() *Manager {
 	if INSTANCE.Load() == nil{
-		am,_,err := makeAccountManager(false,"",node.DefaultDataDir())
-		if err != nil {
-			return nil
-		}
-		INSTANCE.Store(am)
+		//am,_,err := makeAccountManager(false,"",node.DefaultDataDir())
+		//if err != nil {
+		//	return nil
+		//}
+		//INSTANCE.Store(am)
+		return nil
 	}
 	return INSTANCE.Load().(*Manager)
 }
