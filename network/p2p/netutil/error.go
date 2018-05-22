@@ -64,6 +64,7 @@ func Fatalf(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
+
 // IsTemporaryError checks whether the given error should be considered temporary.
 func IsTemporaryError(err error) bool {
 	tempErr, ok := err.(interface {
