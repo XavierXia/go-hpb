@@ -14,41 +14,116 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-package core
+package events
 
 import (
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/core/types"
+	"container/list"
+	"errors"
+	"sync"
 )
 
-// TxPreEvent is posted when a transaction enters the transaction pool.
-type TxPreEvent struct{ Tx *types.Transaction }
+type EventType int16
 
-// PendingLogsEvent is posted pre mining and notifies of pending logs.
-type PendingLogsEvent struct {
-	Logs []*types.Log
+type Subscriber chan interface{}
+
+type EleType struct {
+	eChan Subscriber
 }
 
-// PendingStateEvent is posted pre mining and notifies of pending state changes.
-type PendingStateEvent struct{}
-
-// NewMinedBlockEvent is posted when a block has been imported.
-type NewMinedBlockEvent struct{ Block *types.Block }
-
-// RemovedTransactionEvent is posted when a reorg happens
-type RemovedTransactionEvent struct{ Txs types.Transactions }
-
-// RemovedLogsEvent is posted when a reorg happens
-type RemovedLogsEvent struct{ Logs []*types.Log }
-
-type ChainEvent struct {
-	Block *types.Block
-	Hash  common.Hash
-	Logs  []*types.Log
+type Subscribers struct {
+	submap map[Subscriber]*list.Element
+	sublist *list.List
 }
 
-type ChainSideEvent struct {
-	Block *types.Block
+type Event struct {
+	m   sync.RWMutex
+	eventTable map[EventType]Subscribers
 }
 
-type ChainHeadEvent struct{ Block *types.Block }
+func NewEvent() *Event {
+	return &Event{
+		eventTable : make(map[EventType]Subscribers),
+	}
+}
+
+// Subscribe specified event.
+func (e *Event) Subscribe(eventtype EventType) Subscriber {
+
+	e.m.Lock()
+	defer e.m.Unlock()
+
+	sub := make(chan interface{})
+	subs, ok := e.eventTable[eventtype]
+	if !ok {
+		subs = Subscribers{
+			submap: make(map[Subscriber]*list.Element),
+			sublist:list.New(),
+		}
+		e.eventTable[eventtype] = subs
+	}
+	subs.sublist.PushBack(EleType{eChan:sub})
+	subs.submap[sub]=subs.sublist.Back()
+	return sub
+}
+
+// UnSubscribe the event and remove the specified subscriber
+func (e *Event) UnSubscribe(eventtype EventType, subscriber Subscriber) (err error) {
+	e.m.Lock()
+	defer e.m.Unlock()
+
+	subEvent, ok := e.eventTable[eventtype]
+	if !ok {
+		err = errors.New("No event type.")
+		return
+	}
+	elem,ok := subEvent.submap[subscriber]
+	if !ok {
+		err = errors.New("Not subscribe this event.")
+		return
+	}
+	subEvent.sublist.Remove(elem)
+	delete (subEvent.submap, subscriber)
+	close(subscriber)
+	return
+}
+
+//Notify subscribers that Subscribe specified event
+func (e *Event) Notify(eventtype EventType, value interface{}) (err error) {
+	e.m.Lock()
+	defer e.m.Unlock()
+
+	subs,ok := e.eventTable[eventtype]
+	if !ok {
+		err = errors.New("No event type.")
+		return
+	}
+	elem := subs.sublist.Front()
+	for nil != elem {
+		et, ok := elem.Value.(EleType)
+		if ok {
+			e.NotifyChannel(et.eChan, value)
+		}
+
+		elem = elem.Next()
+	}
+	return
+}
+
+// Notify with subscriber channel.
+func (e *Event) NotifyChannel(subscriber Subscriber, value interface{}) (err error) {
+	if subscriber == nil {
+		return
+	}
+	subscriber<-value
+	return
+}
+
+//Notify all event subscribers
+func (e *Event) NotifyAll(v interface{}) (errs []error) {
+	for eventtype,_:=range e.eventTable {
+		if err := e.Notify(eventtype, v); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
