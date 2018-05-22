@@ -28,7 +28,6 @@ import (
 	"github.com/hpb-project/go-hpb/account/keystore"
 	"sync/atomic"
 	"github.com/hpb-project/ghpb/node"
-	"github.com/hpb-project/ghpb/account"
 )
 
 var datadirDefaultKeyStore = "keystore"           // Path within the datadir to the keystore
@@ -257,8 +256,7 @@ func GetManager() *Manager {
 			return nil
 		}
 		INSTANCE.Store(am)
-	}else{
-		return INSTANCE.Load().(*Manager)
 	}
+	return INSTANCE.Load().(*Manager)
 }
 

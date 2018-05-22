@@ -25,7 +25,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hpb-project/ghpb/account"
+	"github.com/hpb-project/go-hpb/account"
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/pborman/uuid"
 	"golang.org/x/crypto/pbkdf2"
