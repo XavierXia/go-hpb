@@ -23,12 +23,46 @@ import (
 	"runtime"
 )
 
+const (
+	ErrNetwork                  uint32= 0x00000000
+	ErrMsgTooLarge
+	ErrDecode
+	ErrInvalidMsgCode
+	ErrProtocolVersionMismatch
+	ErrNetworkIdMismatch
+	ErrGenesisBlockMismatch
+	ErrNoStatusMsg
+	ErrExtraStatusMsg
+	ErrSuspendedPeer
+
+	ErrDicover                  uint32= 0x00010000
+	ErrPeer                     uint32= 0x00020000
+	ErrDialer                   uint32= 0x00030000
+	ErrRlpx                     uint32= 0x00040000
+	ErrProtocol                 uint32= 0x00050000
+
+)
+var ErrToString = map[int]string{
+	ErrMsgTooLarge:             "Message too long",
+	ErrDecode:                  "Invalid message",
+	ErrInvalidMsgCode:          "Invalid message code",
+	ErrProtocolVersionMismatch: "Protocol version mismatch",
+	ErrNetworkIdMismatch:       "NetworkId mismatch",
+	ErrGenesisBlockMismatch:    "Genesis block mismatch",
+	ErrNoStatusMsg:             "No status message",
+	ErrExtraStatusMsg:          "Extra status message",
+	ErrSuspendedPeer:           "Suspended peer",
+}
+
 type errid uint32
 
 type errCode struct {
 	code errid
 	text string
 }
+// XXX change once legacy code is out
+
+
 
 func New(cd errid,text string) errCode {
 	return errCode{cd,text}
@@ -38,12 +72,11 @@ func (ec *errCode)ID()errid  {
 	return ec.code
 }
 
-func (ec *errCode)String()string  {
+func (ec *errCode)Error()string  {
 	return ec.text
 }
 
-
-
+///////////////////////////////////////////////////////////////
 
 
 
@@ -62,6 +95,12 @@ func Fatalf(format string, args ...interface{}) {
 	}
 	fmt.Fprintf(w, "Fatal: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+
+
+func ErrResp(code errCode, format string, v ...interface{}) error {
+	return fmt.Errorf("%v - %v", code, fmt.Sprintf(format, v...))
 }
 
 

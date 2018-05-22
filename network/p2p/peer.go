@@ -32,15 +32,14 @@ import (
 	"github.com/hpb-project/ghpb/common"
 	"math/big"
 	"gopkg.in/fatih/set.v0"
+	"github.com/hpb-project/ghpb/network/p2p/netutil"
 )
 
 const (
 	baseProtocolVersion    = 5
 	baseProtocolLength     = uint64(16)
 	baseProtocolMaxMsgSize = 2 * 1024
-
 	snappyProtocolVersion = 5
-
 	pingInterval = 15 * time.Second
 )
 
@@ -493,6 +492,79 @@ func (p *Peer) SetHead(hash common.Hash, td *big.Int) {
 
 	copy(p.head[:], hash[:])
 	p.td.Set(td)
+}
+///////////////////////////////////////////////////////////////
+//Peer的协议握手
+
+// statusData is the network packet for the status message.
+type statusData struct {
+	ProtocolVersion uint32
+	NetworkId       uint64
+	TD              *big.Int
+	CurrentBlock    common.Hash
+	GenesisBlock    common.Hash
+}
+
+// Handshake executes the eth protocol handshake, negotiating version number,
+// network IDs, difficulties, head and genesis blocks.
+func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash) error {
+	// Send out own handshake in a new thread
+	errc := make(chan error, 2)
+	var status statusData // safe to read after two values have been received from errc
+
+	go func() {
+		errc <- Send(p.rw, StatusMsg, &statusData{
+			ProtocolVersion: uint32(p.version),
+			NetworkId:       network,
+			TD:              td,
+			CurrentBlock:    head,
+			GenesisBlock:    genesis,
+		})
+	}()
+	go func() {
+		errc <- p.readStatus(network, &status, genesis)
+	}()
+	timeout := time.NewTimer(handshakeTimeout)
+	defer timeout.Stop()
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errc:
+			if err != nil {
+				return err
+			}
+		case <-timeout.C:
+			return DiscReadTimeout
+		}
+	}
+	p.td, p.head = status.TD, status.CurrentBlock
+	return nil
+}
+
+func (p *Peer) readStatus(network uint64, status *statusData, genesis common.Hash) (err error) {
+	msg, err := p.rw.ReadMsg()
+	if err != nil {
+		return err
+	}
+	if msg.Code != StatusMsg {
+		return netutil.ErrResp(ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, StatusMsg)
+	}
+	if msg.Size > ProtocolMaxMsgSize {
+		return netutil.ErrResp(ErrMsgTooLarge, "%v > %v", msg.Size, ProtocolMaxMsgSize)
+	}
+	// Decode the handshake and make sure everything matches
+	if err := msg.Decode(&status); err != nil {
+		return netutil.ErrResp(ErrDecode, "msg %v: %v", msg, err)
+	}
+	if status.GenesisBlock != genesis {
+		return netutil.ErrResp(ErrGenesisBlockMismatch, "%x (!= %x)", status.GenesisBlock[:8], genesis[:8])
+	}
+	if status.NetworkId != network {
+		return netutil.ErrResp(ErrNetworkIdMismatch, "%d (!= %d)", status.NetworkId, network)
+	}
+	if uint(status.ProtocolVersion) != p.version {
+		return netutil.ErrResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
+	}
+	return nil
 }
 
 ///////////////////////////////////////////////////////////////
