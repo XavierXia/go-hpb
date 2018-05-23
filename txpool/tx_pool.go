@@ -192,7 +192,7 @@ func GetTxPool() *TxPool {
 
 //Stop the transaction pool.
 func (pool *TxPool) Stop() {
-	if STOPPED.Load() == nil{
+	if STOPPED.Load() == nil {
 		//1.stop main process loop
 		pool.stopCh <- struct{}{}
 		//2.wait quit
@@ -728,11 +728,17 @@ func (pool *TxPool) removeTx(hash common.Hash) {
 			if pending.Empty() {
 				delete(pool.pending, addr)
 				delete(pool.beats, addr)
-			} else {
-				// Otherwise postpone any invalidated transactions
-				for _, tx := range invalids {
-					pool.enqueueTx(tx.Hash(), tx)
-				}
+				//} else {
+				//	// Otherwise postpone any invalidated transactions
+				//	for _, tx := range invalids {
+				//		pool.enqueueTx(tx.Hash(), tx)
+				//	}
+			}
+			// should enqueue the invalids tx anyway
+			// see f8601430fddfe44b9c1781957ab13578cf17ad9f
+			// Otherwise postpone any invalidated transactions
+			for _, tx := range invalids {
+				pool.enqueueTx(tx.Hash(), tx)
 			}
 			// Update the account nonce if needed
 			if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr) > nonce {
