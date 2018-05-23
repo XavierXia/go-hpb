@@ -53,8 +53,6 @@ According to NIST SP 800-57, the following curves should be selected:
     +----------------+-------+
 
 
-TODO
-
 1. Look at serialising the parameters with the SEC 1 ASN.1 module.
 2. Validate ASN.1 formats with SEC 1.
 

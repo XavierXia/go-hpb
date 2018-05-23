@@ -149,7 +149,6 @@ public class NativeSecp256k1 {
      * Return values
      * @param pubkey ECDSA Public key, 33 or 65 bytes
      */
-    //TODO add a 'compressed' arg
     public static byte[] computePubkey(byte[] seckey) throws AssertFailException{
         Preconditions.checkArgument(seckey.length == 32);
 

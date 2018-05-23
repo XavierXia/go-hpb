@@ -11,7 +11,6 @@ import static org.bitcoin.NativeSecp256k1Util.*;
  */
 public class NativeSecp256k1Test {
 
-    //TODO improve comments/add more tests
     /**
       * This tests verify() for a valid signature
       */

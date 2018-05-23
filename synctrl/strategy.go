@@ -18,6 +18,7 @@ package synctrl
 
 import (
 	"errors"
+	"github.com/hpb-project/go-hpb/network/p2p"
 )
 
 const (
@@ -26,7 +27,28 @@ const (
 )
 
 var (
+	errBusy                    = errors.New("busy")
+	errUnknownPeer             = errors.New("peer is unknown or unhealthy")
+	errBadPeer                 = errors.New("action from bad peer ignored")
+	errStallingPeer            = errors.New("peer is stalling")
+	errNoPeers                 = errors.New("no peers to keep download active")
 	errTimeout                 = errors.New("timeout")
+	errEmptyHeaderSet          = errors.New("empty header set by peer")
+	errPeersUnavailable        = errors.New("no peers available or all tried for download")
+	errInvalidAncestor         = errors.New("retrieved ancestor is invalid")
+	errInvalidChain            = errors.New("retrieved hash chain is invalid")
+	errInvalidBlock            = errors.New("retrieved block is invalid")
+	errInvalidBody             = errors.New("retrieved block body is invalid")
+	errInvalidReceipt          = errors.New("retrieved receipt is invalid")
+	errCancelBlockFetch        = errors.New("block download canceled (requested)")
+	errCancelHeaderFetch       = errors.New("block header download canceled (requested)")
+	errCancelBodyFetch         = errors.New("block body download canceled (requested)")
+	errCancelReceiptFetch      = errors.New("receipt download canceled (requested)")
+	errCancelStateFetch        = errors.New("state data download canceled (requested)")
+	errCancelHeaderProcessing  = errors.New("header processing canceled (requested)")
+	errCancelContentProcessing = errors.New("content processing canceled (requested)")
+	errNoSyncActive            = errors.New("no sync active")
+	errTooOld                  = errors.New("peer doesn't speak recent enough protocol version (need version >= 62)")
 )
 
 type syncStrategy interface {

@@ -24,7 +24,7 @@ import (
 
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/crypto"
-	"github.com/hpb-project/go-hpb/data/storage"
+	"github.com/hpb-project/go-hpb/storage"
 )
 
 func newEmptySecure() *SecureTrie {

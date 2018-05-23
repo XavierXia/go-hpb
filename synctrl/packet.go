@@ -17,7 +17,7 @@
 package synctrl
 
 import (
-	"github.com/hpb-project/go-hpb/data/types"
+	"github.com/hpb-project/go-hpb/blockchain/types"
 )
 
 const (

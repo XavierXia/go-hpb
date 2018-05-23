@@ -17,6 +17,9 @@
 package synctrl
 
 import (
+	"github.com/hpb-project/go-hpb/blockchain"
+	"github.com/hpb-project/go-hpb/network/p2p"
+	"github.com/hpb-project/go-hpb/network/p2p/discover"
 	"math/rand"
 	"time"
 
@@ -26,7 +29,7 @@ import (
 
 const (
 	syncInterval        = 10 * time.Second
-	txChanCache = 100000
+	txChanCache         = 100000
 	txsyncPackSize      = 100 * 1024
 )
 

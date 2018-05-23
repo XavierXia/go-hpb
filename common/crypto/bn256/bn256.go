@@ -23,7 +23,6 @@ import (
 )
 
 // BUG(agl): this implementation is not constant time.
-// TODO(agl): keep GF(p²) elements in Mongomery form.
 
 // G1 is an abstract cyclic group. The zero value is suitable for use as the
 // output of an operation, but cannot be used as an input.

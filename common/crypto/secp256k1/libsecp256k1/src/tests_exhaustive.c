@@ -419,8 +419,6 @@ int main(void) {
     /* Build context */
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
 
-    /* TODO set z = 1, then do num_tests runs with random z values */
-
     /* Generate the entire group */
     secp256k1_gej_set_infinity(&groupj[0]);
     secp256k1_ge_set_gej(&group[0], &groupj[0]);

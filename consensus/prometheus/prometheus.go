@@ -28,8 +28,8 @@ import (
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/hexutil"
 	"github.com/hpb-project/go-hpb/consensus"
-	"github.com/hpb-project/go-hpb/data/state"
-	"github.com/hpb-project/go-hpb/data/types"
+	"github.com/hpb-project/go-hpb/blockchain/state"
+	"github.com/hpb-project/go-hpb/blockchain/types"
 
 	"github.com/hashicorp/golang-lru"
 	"github.com/hpb-project/go-hpb/common/constant"
@@ -38,7 +38,7 @@ import (
 	"github.com/hpb-project/go-hpb/common/log"
 	"github.com/hpb-project/go-hpb/common/rlp"
 	"github.com/hpb-project/go-hpb/network/rpc"
-	"github.com/hpb-project/go-hpb/data/storage"
+	"github.com/hpb-project/go-hpb/storage"
 	
 )
 
@@ -142,6 +142,7 @@ func (c *Prometheus) Prepare(chain consensus.ChainReader, header *types.Header) 
 	if snap.inturn(header.Number.Uint64(), signerHash) {
 		header.Difficulty = diffInTurn
 	}
+	
 	// Ensure the extra data has all it's components
 	if len(header.Extra) < extraVanity {
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
@@ -613,9 +614,33 @@ func (c *Prometheus) Seal(chain consensus.ChainReader, block *types.Block, stop 
 	if header.Difficulty.Cmp(diffNoTurn) == 0 {
 		// It's not our turn explicitly to sign, delay it a bit
 		wiggle := time.Duration(len(snap.Signers)/2+1) * wiggleTime
-		delay += time.Duration(rand.Int63n(int64(wiggle)))
+		//delay += time.Duration(rand.Int63n(int64(wiggle)))
 
 		log.Info("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
+		
+		currentIndex := number % uint64(len(snap.Signers))	
+		offset := snap.getOffset(header.Number.Uint64(), signerHash)
+
+       //在一定范围内延迟8分,当前的currentIndex往前的没有超过
+       if(currentIndex <= uint64(len(snap.Signers)/2)){
+	       if(offset - currentIndex <= uint64(len(snap.Signers)/2)){
+				wiggle = time.Duration(1000) * wiggleTime
+				log.Info("$$$$$$$$$$$$$$$$$$$$$$$","less than half",common.PrettyDuration(wiggle))
+				delay += wiggle;
+			}else{
+				delay += time.Duration(offset - currentIndex - uint64(len(snap.Signers)/2))* wiggle
+			}
+       }else{
+       	    if(offset + uint64(len(snap.Signers)/2) <= currentIndex){
+				wiggle = time.Duration(1000) * wiggleTime
+				log.Info("$$$$$$$$$$$$$$$$$$$$$$$","more than half",common.PrettyDuration(wiggle))
+				delay += wiggle;
+			}else{
+				delay += time.Duration(offset - currentIndex - uint64(len(snap.Signers)/2))* wiggle
+			}
+       }
+		
+		log.Info("Out-of-turn signing requested ++++++++++++++++++++++++++++++++++", "delay", common.PrettyDuration(delay))
 	}
 
 	log.Info("Waiting for slot to sign and propagate", "delay", common.PrettyDuration(delay))

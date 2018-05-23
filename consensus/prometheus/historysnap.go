@@ -24,8 +24,8 @@ import (
 	"encoding/json"
 	
 	"github.com/hpb-project/go-hpb/common"
-	"github.com/hpb-project/go-hpb/data/types"
-	"github.com/hpb-project/go-hpb/data/storage"
+	"github.com/hpb-project/go-hpb/blockchain/types"
+	"github.com/hpb-project/go-hpb/storage"
 	"github.com/hpb-project/go-hpb/common/constant"
 	"github.com/hashicorp/golang-lru"
 	//"github.com/hpb-project/go-hpb/common/log"
@@ -214,6 +214,15 @@ func (s *Historysnap) inturn(number uint64, signerHash common.AddressHash) bool 
 	return (number % uint64(len(signers))) == uint64(offset)
 }
 
+
+// 判断当前的次序
+func (s *Historysnap) getOffset(number uint64, signerHash common.AddressHash) uint64 {
+	signers, offset := s.signers(), 0
+	for offset < len(signers) && signers[offset] != signerHash {
+		offset++
+	}
+	return uint64(offset)
+}
 
 // 已经授权的signers, 无需进行排序
 func (s *Historysnap) signers() []common.AddressHash {
