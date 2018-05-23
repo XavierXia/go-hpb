@@ -448,6 +448,9 @@ func (pool *TxPool) add(tx *types.Transaction) (bool, error) {
 		pool.all[tx.Hash()] = tx
 
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
+		// We've directly injected a replacement transaction, notify subsystems
+		//TODO change to event
+		//go pool.txFeed.Send(TxPreEvent{tx})
 		return old != nil, nil
 	}
 	// New transaction isn't replacing a pending one, push into queue
