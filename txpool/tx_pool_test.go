@@ -29,6 +29,7 @@ import (
 	"github.com/hpb-project/ghpb/core/event"
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/ghpb/core"
+	"math/rand"
 )
 
 // testTxPoolConfig is a transaction pool configuration without stateful disk
@@ -451,5 +452,262 @@ func TestTransactionNonceRecovery(t *testing.T) {
 	}
 	if len(pool.all) != 1 {
 		t.Error("expected 1 total transactions, got", len(pool.all))
+	}
+}
+
+// Tests that if an account runs out of funds, any pending and queued transactions
+// are dropped.
+func TestTransactionDropping(t *testing.T) {
+	// Create a test account and fund it
+	pool, key := setupTxPool()
+	defer pool.Stop()
+
+	account, _ := deriveSender(transaction(0, big.NewInt(0), key))
+	pool.currentState.AddBalance(account, big.NewInt(1000))
+
+	// Add some pending and some queued transactions
+	var (
+		tx0  = transaction(0, big.NewInt(100), key)
+		tx1  = transaction(1, big.NewInt(200), key)
+		tx2  = transaction(2, big.NewInt(300), key)
+		tx10 = transaction(10, big.NewInt(100), key)
+		tx11 = transaction(11, big.NewInt(200), key)
+		tx12 = transaction(12, big.NewInt(300), key)
+	)
+	pool.promoteTx(account, tx0.Hash(), tx0)
+	pool.promoteTx(account, tx1.Hash(), tx1)
+	pool.promoteTx(account, tx2.Hash(), tx2)
+	pool.enqueueTx(tx10.Hash(), tx10)
+	pool.enqueueTx(tx11.Hash(), tx11)
+	pool.enqueueTx(tx12.Hash(), tx12)
+
+	// Check that pre and post validations leave the pool as is
+	if pool.pending[account].Len() != 3 {
+		t.Errorf("pending transaction mismatch: have %d, want %d", pool.pending[account].Len(), 3)
+	}
+	if pool.queue[account].Len() != 3 {
+		t.Errorf("queued transaction mismatch: have %d, want %d", pool.queue[account].Len(), 3)
+	}
+	if len(pool.all) != 6 {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), 6)
+	}
+	pool.lockedReset(nil, nil)
+	if pool.pending[account].Len() != 3 {
+		t.Errorf("pending transaction mismatch: have %d, want %d", pool.pending[account].Len(), 3)
+	}
+	if pool.queue[account].Len() != 3 {
+		t.Errorf("queued transaction mismatch: have %d, want %d", pool.queue[account].Len(), 3)
+	}
+	if len(pool.all) != 6 {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), 6)
+	}
+	// Reduce the balance of the account, and check that invalidated transactions are dropped
+	pool.currentState.AddBalance(account, big.NewInt(-650))
+	pool.lockedReset(nil, nil)
+
+	if _, ok := pool.pending[account].txs.items[tx0.Nonce()]; !ok {
+		t.Errorf("funded pending transaction missing: %v", tx0)
+	}
+	if _, ok := pool.pending[account].txs.items[tx1.Nonce()]; !ok {
+		t.Errorf("funded pending transaction missing: %v", tx0)
+	}
+	if _, ok := pool.pending[account].txs.items[tx2.Nonce()]; ok {
+		t.Errorf("out-of-fund pending transaction present: %v", tx1)
+	}
+	if _, ok := pool.queue[account].txs.items[tx10.Nonce()]; !ok {
+		t.Errorf("funded queued transaction missing: %v", tx10)
+	}
+	if _, ok := pool.queue[account].txs.items[tx11.Nonce()]; !ok {
+		t.Errorf("funded queued transaction missing: %v", tx10)
+	}
+	if _, ok := pool.queue[account].txs.items[tx12.Nonce()]; ok {
+		t.Errorf("out-of-fund queued transaction present: %v", tx11)
+	}
+	if len(pool.all) != 4 {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), 4)
+	}
+	// Reduce the block gas limit, check that invalidated transactions are dropped
+	pool.chain.(*testBlockChain).gasLimit = big.NewInt(100)
+	pool.lockedReset(nil, nil)
+
+	if _, ok := pool.pending[account].txs.items[tx0.Nonce()]; !ok {
+		t.Errorf("funded pending transaction missing: %v", tx0)
+	}
+	if _, ok := pool.pending[account].txs.items[tx1.Nonce()]; ok {
+		t.Errorf("over-gased pending transaction present: %v", tx1)
+	}
+	if _, ok := pool.queue[account].txs.items[tx10.Nonce()]; !ok {
+		t.Errorf("funded queued transaction missing: %v", tx10)
+	}
+	if _, ok := pool.queue[account].txs.items[tx11.Nonce()]; ok {
+		t.Errorf("over-gased queued transaction present: %v", tx11)
+	}
+	if len(pool.all) != 2 {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), 2)
+	}
+}
+
+// Tests that if a transaction is dropped from the current pending pool (e.g. out
+// of fund), all consecutive (still valid, but not executable) transactions are
+// postponed back into the future queue to prevent broadcasting them.
+func TestTransactionPostponing(t *testing.T) {
+	// Create a test account and fund it
+	pool, key := setupTxPool()
+	defer pool.Stop()
+
+	account, _ := deriveSender(transaction(0, big.NewInt(0), key))
+	pool.currentState.AddBalance(account, big.NewInt(1000))
+
+	// Add a batch consecutive pending transactions for validation
+	txns := []*types.Transaction{}
+	for i := 0; i < 100; i++ {
+		var tx *types.Transaction
+		if i%2 == 0 {
+			tx = transaction(uint64(i), big.NewInt(100), key)
+		} else {
+			tx = transaction(uint64(i), big.NewInt(500), key)
+		}
+		pool.promoteTx(account, tx.Hash(), tx)
+		txns = append(txns, tx)
+	}
+	// Check that pre and post validations leave the pool as is
+	if pool.pending[account].Len() != len(txns) {
+		t.Errorf("pending transaction mismatch: have %d, want %d", pool.pending[account].Len(), len(txns))
+	}
+	if len(pool.queue) != 0 {
+		t.Errorf("queued transaction mismatch: have %d, want %d", pool.queue[account].Len(), 0)
+	}
+	if len(pool.all) != len(txns) {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), len(txns))
+	}
+	pool.lockedReset(nil, nil)
+	if pool.pending[account].Len() != len(txns) {
+		t.Errorf("pending transaction mismatch: have %d, want %d", pool.pending[account].Len(), len(txns))
+	}
+	if len(pool.queue) != 0 {
+		t.Errorf("queued transaction mismatch: have %d, want %d", pool.queue[account].Len(), 0)
+	}
+	if len(pool.all) != len(txns) {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), len(txns))
+	}
+	// Reduce the balance of the account, and check that transactions are reorganised
+	pool.currentState.AddBalance(account, big.NewInt(-750))
+	pool.lockedReset(nil, nil)
+
+	if _, ok := pool.pending[account].txs.items[txns[0].Nonce()]; !ok {
+		t.Errorf("tx %d: valid and funded transaction missing from pending pool: %v", 0, txns[0])
+	}
+	if _, ok := pool.queue[account].txs.items[txns[0].Nonce()]; ok {
+		t.Errorf("tx %d: valid and funded transaction present in future queue: %v", 0, txns[0])
+	}
+	for i, tx := range txns[1:] {
+		if i%2 == 1 {
+			if _, ok := pool.pending[account].txs.items[tx.Nonce()]; ok {
+				t.Errorf("tx %d: valid but future transaction present in pending pool: %v", i+1, tx)
+			}
+			if _, ok := pool.queue[account].txs.items[tx.Nonce()]; !ok {
+				t.Errorf("tx %d: valid but future transaction missing from future queue: %v", i+1, tx)
+			}
+		} else {
+			if _, ok := pool.pending[account].txs.items[tx.Nonce()]; ok {
+				t.Errorf("tx %d: out-of-fund transaction present in pending pool: %v", i+1, tx)
+			}
+			if _, ok := pool.queue[account].txs.items[tx.Nonce()]; ok {
+				t.Errorf("tx %d: out-of-fund transaction present in future queue: %v", i+1, tx)
+			}
+		}
+	}
+	if len(pool.all) != len(txns)/2 {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), len(txns)/2)
+	}
+}
+
+// Tests that if the transaction count belonging to a single account goes above
+// some threshold, the higher transactions are dropped to prevent DOS attacks.
+func TestTransactionQueueAccountLimiting(t *testing.T) {
+	// Create a test account and fund it
+	pool, key := setupTxPool()
+	defer pool.Stop()
+
+	account, _ := deriveSender(transaction(0, big.NewInt(0), key))
+	pool.currentState.AddBalance(account, big.NewInt(1000000))
+
+	// Keep queuing up transactions and make sure all above a limit are dropped
+	for i := uint64(1); i <= testTxPoolConfig.AccountQueue+5; i++ {
+		if err := pool.AddTx(transaction(i, big.NewInt(100000), key)); err != nil {
+			t.Fatalf("tx %d: failed to add transaction: %v", i, err)
+		}
+		if len(pool.pending) != 0 {
+			t.Errorf("tx %d: pending pool size mismatch: have %d, want %d", i, len(pool.pending), 0)
+		}
+		if i <= testTxPoolConfig.AccountQueue {
+			if pool.queue[account].Len() != int(i) {
+				t.Errorf("tx %d: queue size mismatch: have %d, want %d", i, pool.queue[account].Len(), i)
+			}
+		} else {
+			if pool.queue[account].Len() != int(testTxPoolConfig.AccountQueue) {
+				t.Errorf("tx %d: queue limit mismatch: have %d, want %d", i, pool.queue[account].Len(), testTxPoolConfig.AccountQueue)
+			}
+		}
+	}
+	if len(pool.all) != int(testTxPoolConfig.AccountQueue) {
+		t.Errorf("total transaction mismatch: have %d, want %d", len(pool.all), testTxPoolConfig.AccountQueue)
+	}
+}
+
+// Tests that if the transaction count belonging to multiple accounts go above
+// some threshold, the higher transactions are dropped to prevent DOS attacks.
+//
+// This logic should not hold for local transactions, unless the local tracking
+// mechanism is disabled.
+func TestTransactionQueueGlobalLimiting(t *testing.T) {
+	testTransactionQueueGlobalLimiting(t, false)
+}
+func TestTransactionQueueGlobalLimitingNoLocals(t *testing.T) {
+	testTransactionQueueGlobalLimiting(t, true)
+}
+
+func testTransactionQueueGlobalLimiting(t *testing.T, nolocals bool) {
+	// Create the pool to test the limit enforcement with
+	db, _ := hpbdb.NewMemDatabase()
+	statedb, _ := state.New(common.Hash{}, state.NewDatabase(db))
+	blockchain := &testBlockChain{statedb, big.NewInt(1000000), new(event.Feed)}
+
+	config := testTxPoolConfig
+	config.GlobalQueue = config.AccountQueue*3 - 1 // reduce the queue limits to shorten test time (-1 to make it non divisible)
+
+	pool := NewTxPool(config, params.TestnetChainConfig, blockchain)
+	defer pool.Stop()
+
+	// Create a number of test accounts and fund them (last one will be the local)
+	keys := make([]*ecdsa.PrivateKey, 5)
+	for i := 0; i < len(keys); i++ {
+		keys[i], _ = crypto.GenerateKey()
+		pool.currentState.AddBalance(crypto.PubkeyToAddress(keys[i].PublicKey), big.NewInt(1000000))
+	}
+
+	// Generate and queue a batch of transactions
+	nonces := make(map[common.Address]uint64)
+
+	txs := make(types.Transactions, 0, 3*config.GlobalQueue)
+	for len(txs) < cap(txs) {
+		key := keys[rand.Intn(len(keys)-1)] // skip adding transactions with the local account
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+
+		txs = append(txs, transaction(nonces[addr]+1, big.NewInt(100000), key))
+		nonces[addr]++
+	}
+	// Import the batch and verify that limits have been enforced
+	pool.AddTxs(txs)
+
+	queued := 0
+	for addr, list := range pool.queue {
+		if list.Len() > int(config.AccountQueue) {
+			t.Errorf("addr %x: queued accounts overflown allowance: %d > %d", addr, list.Len(), config.AccountQueue)
+		}
+		queued += list.Len()
+	}
+	if queued > int(config.GlobalQueue) {
+		t.Fatalf("total transactions overflow allowance: %d > %d", queued, config.GlobalQueue)
 	}
 }
