@@ -7,43 +7,59 @@ import (
 	"github.com/btcsuite/btcd/btcjson"
 	"fmt"
 	"github.com/hpb-project/go-hpb/account/keystore"
+	"github.com/hpb-project/go-hpb/account"
+	"github.com/hpb-project/ghpb/storage"
+	"github.com/hpb-project/ghpb/common/crypto"
+	"github.com/hpb-project/ghpb/core/state"
+	"github.com/hpb-project/ghpb/common/constant"
+	"github.com/hpb-project/ghpb/core/event"
+	"github.com/hpb-project/ghpb/common"
 )
 
-func TestSubmitTx(t *testing.T) {
-	am , _ , _ := MockAccountManager(false,"","")
+func prepare() (*keystore.KeyStore, *TxPool) {
+	am, _, _ := MockAccountManager(false, "", "")
 	ks := am.Backends(keystore.KeyStoreType)[0].(*keystore.KeyStore)
-	account, err := ks.NewAccount("ABC")
-	if err != nil {
-		t.Fatalf("Failed to create account: %v", err)
-	}
-	fmt.Printf("Address From: {%x}\n", account.Address)
-	ks.Unlock(account,"ABC")
+	var (
+		db, _      = hpbdb.NewMemDatabase()
+		key, _     = crypto.GenerateKey()
+		address    = crypto.PubkeyToAddress(key.PublicKey)
+		statedb, _ = state.New(common.Hash{}, state.NewDatabase(db))
+		trigger    = false
+	)
+
+	// setup pool with 2 transaction in it
+	statedb.SetBalance(address, new(big.Int).SetUint64(params.Ether))
+	blockchain := &testChain{&testBlockChain{statedb, big.NewInt(1000000000), new(event.Feed)}, address, &trigger}
+	pool := NewTxPool(testTxPoolConfig, params.TestnetChainConfig, blockchain)
+	return ks, pool
+}
+
+func TestSubmitTx(t *testing.T) {
+	ks, _ := prepare()
+
+	from := accounts.Account{Address: testAddress}
+
 	accountTo, err := ks.NewAccount("ABC")
 	if err != nil {
 		t.Fatalf("Failed to create account: %v", err)
 	}
 	fmt.Printf("Address To: {%x}\n", accountTo.Address)
-	ks.Unlock(accountTo,"ABC")
-
-	poolConfig := TxPoolConfig{
-
-	}
-	NewTxPool(poolConfig)
 
 	sendTxArgs := SendTxArgs{
-		From:     account.Address,
+		From:     from.Address,
 		To:       &accountTo.Address,
-		Gas:      (*hexutil.Big)(big.NewInt(0)),
-		GasPrice: (*hexutil.Big)(big.NewInt(0)),
-		Value:    (*hexutil.Big)(big.NewInt(0)),
+		Gas:      (*hexutil.Big)(big.NewInt(100)),
+		GasPrice: (*hexutil.Big)(big.NewInt(1000)),
+		Value:    (*hexutil.Big)(big.NewInt(10000)),
 		Data:     hexutil.Bytes([]byte{}),
 		Nonce:    (*hexutil.Uint64)(btcjson.Uint64(1)),
 	}
 	hash, err := SubmitTx(sendTxArgs)
 	if err != nil {
-		t.Error("error SubmitTx",err)
+		t.Error("error SubmitTx", err)
 	}
 	t.Log(hash)
+
 }
 
 func TestSubmitRawTx(t *testing.T) {

@@ -101,6 +101,7 @@ var DefaultTxPoolConfig = TxPoolConfig{
 }
 
 var INSTANCE = atomic.Value{}
+var STOPPED = atomic.Value{}
 
 // blockChain provides the state of blockchain and current gas limit to do
 // some pre checks in tx pool and event subscribers.
@@ -132,7 +133,7 @@ type TxPool struct {
 	stopCh chan struct{}
 
 	//TODO remove
-	blockChain  blockChain
+	chain       blockChain
 	chainHeadCh chan core.ChainHeadEvent
 
 	signer types.Signer
@@ -151,26 +152,29 @@ type TxPool struct {
 }
 
 //Create the transaction pool and start main process loop.
-func NewTxPool(config TxPoolConfig) *TxPool {
+func NewTxPool(config TxPoolConfig, chainConfig *params.ChainConfig, blockChain blockChain) *TxPool {
 	if INSTANCE.Load() != nil {
 		return INSTANCE.Load().(*TxPool)
 	}
 	//1.Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
 	//2.Create the transaction pool with its initial settings
-	mockBlockChain := MockBlockChain()
 	pool := &TxPool{
-		config:      config,
-		pending:     make(map[common.Address]*txList),
-		queue:       make(map[common.Address]*txList),
-		beats:       make(map[common.Address]time.Time),
-		all:         make(map[common.Hash]*types.Transaction),
-		gasPrice:    new(big.Int).SetUint64(config.PriceLimit),
+		config:   config,
+		pending:  make(map[common.Address]*txList),
+		queue:    make(map[common.Address]*txList),
+		beats:    make(map[common.Address]time.Time),
+		all:      make(map[common.Hash]*types.Transaction),
+		gasPrice: new(big.Int).SetUint64(config.PriceLimit),
 		//FIXME
-		blockChain:  mockBlockChain,
-		signer:      types.NewEIP155Signer(mockBlockChain.Config().ChainId),
+		chain:       blockChain,
+		signer:      types.NewEIP155Signer(chainConfig.ChainId),
 		chainHeadCh: make(chan core.ChainHeadEvent, 10),
+		stopCh:      make(chan struct{}),
 	}
+
+	pool.reset(nil, blockChain.CurrentBlock().Header())
+
 	//3.start main process loop
 	pool.wg.Add(1)
 	go pool.loop()
@@ -188,10 +192,13 @@ func GetTxPool() *TxPool {
 
 //Stop the transaction pool.
 func (pool *TxPool) Stop() {
-	//1.stop main process loop
-	close(pool.stopCh)
-	//2.wait quit
-	pool.wg.Wait()
+	if STOPPED.Load() == nil{
+		//1.stop main process loop
+		pool.stopCh <- struct{}{}
+		//2.wait quit
+		pool.wg.Wait()
+		STOPPED.Store(true)
+	}
 }
 
 //Main process loop.
@@ -208,7 +215,7 @@ func (pool *TxPool) loop() {
 	defer report.Stop()
 
 	// Track the previous head headers for transaction reorgs
-	head := pool.blockChain.CurrentBlock()
+	head := pool.chain.CurrentBlock()
 
 	// Keep waiting for and reacting to the various events
 	for {
@@ -252,9 +259,18 @@ func (pool *TxPool) loop() {
 
 			//stop signal
 		case <-pool.stopCh:
-			break
+			return
 		}
 	}
+}
+
+// lockedReset is a wrapper around reset to allow calling it in a thread safe
+// manner. This method is only ever used in the tester!
+func (pool *TxPool) lockedReset(oldHead, newHead *types.Header) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	pool.reset(oldHead, newHead)
 }
 
 // reset retrieves the current state of the blockchain and ensures the content
@@ -275,31 +291,31 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 			var discarded, included types.Transactions
 
 			var (
-				rem = pool.blockChain.GetBlock(oldHead.Hash(), oldHead.Number.Uint64())
-				add = pool.blockChain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
+				rem = pool.chain.GetBlock(oldHead.Hash(), oldHead.Number.Uint64())
+				add = pool.chain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
 			)
 			for rem.NumberU64() > add.NumberU64() {
 				discarded = append(discarded, rem.Transactions()...)
-				if rem = pool.blockChain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
+				if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
 					log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
 					return
 				}
 			}
 			for add.NumberU64() > rem.NumberU64() {
 				included = append(included, add.Transactions()...)
-				if add = pool.blockChain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
+				if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
 					log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
 					return
 				}
 			}
 			for rem.Hash() != add.Hash() {
 				discarded = append(discarded, rem.Transactions()...)
-				if rem = pool.blockChain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
+				if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
 					log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
 					return
 				}
 				included = append(included, add.Transactions()...)
-				if add = pool.blockChain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
+				if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
 					log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
 					return
 				}
@@ -309,9 +325,9 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	}
 	// Initialize the internal state to the current head
 	if newHead == nil {
-		newHead = pool.blockChain.CurrentBlock().Header() // Special case during testing
+		newHead = pool.chain.CurrentBlock().Header() // Special case during testing
 	}
-	statedb, err := pool.blockChain.StateAt(newHead.Root)
+	statedb, err := pool.chain.StateAt(newHead.Root)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return
@@ -322,7 +338,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 
 	// Inject any transactions discarded due to reorgs
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
-	pool.AddTxsLocked(reinject)
+	pool.addTxsLocked(reinject)
 
 	// validate the pool of pending transactions, this will remove
 	// any transactions that have been included in the block or
@@ -340,11 +356,23 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	pool.promoteExecutables(nil)
 }
 
-// addTxsLocked attempts to queue a batch of transactions if they are valid,
-// whilst assuming the transaction pool lock is already held.
-func (pool *TxPool) AddTxsLocked(txs []*types.Transaction) error {
+// addTxs attempts to queue a batch of transactions if they are valid.
+func (pool *TxPool) AddTxs(txs []*types.Transaction) error {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
+	return pool.addTxsLocked(txs)
+}
+
+// addTxs attempts to queue a batch of transactions if they are valid.
+func (pool *TxPool) AddTx(tx *types.Transaction) error {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	return pool.addTxLocked(tx)
+}
+
+// addTxsLocked attempts to queue a batch of transactions if they are valid,
+// whilst assuming the transaction pool lock is already held.
+func (pool *TxPool) addTxsLocked(txs []*types.Transaction) error {
 	// Add the batch of transaction, tracking the accepted ones
 	dirty := make(map[common.Address]struct{})
 	for _, tx := range txs {
@@ -367,10 +395,7 @@ func (pool *TxPool) AddTxsLocked(txs []*types.Transaction) error {
 }
 
 // addTx enqueues a single transaction into the pool if it is valid.
-func (pool *TxPool) AddTxLocked(tx *types.Transaction) error {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
+func (pool *TxPool) addTxLocked(tx *types.Transaction) error {
 	// Try to inject the transaction and update any state
 	replace, err := pool.add(tx)
 	if err != nil {
@@ -383,6 +408,7 @@ func (pool *TxPool) AddTxLocked(tx *types.Transaction) error {
 	}
 	return nil
 }
+
 // add validates a transaction and inserts it into the non-executable queue for
 // later pending promotion and execution. If the transaction is a replacement for
 // an already pending or queued one, it overwrites the previous and returns this

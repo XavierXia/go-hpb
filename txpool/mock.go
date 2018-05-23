@@ -14,17 +14,20 @@ import (
 	"os"
 	"github.com/hpb-project/go-hpb/account"
 	"github.com/hpb-project/go-hpb/account/keystore"
+	"github.com/hpb-project/ghpb/common/crypto"
 )
 
+var (
+	testdb, _    = hpbdb.NewMemDatabase()
+	testKey, _   = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	testAddress  = crypto.PubkeyToAddress(testKey.PublicKey)
+	genesis      = core.GenesisBlockForTesting(testdb, testAddress, big.NewInt(1000000000))
+)
+
+
 func MockBlockChain() *core.BlockChain {
-	db, _ := hpbdb.NewMemDatabase()
-	gspec := &core.Genesis{
-		Config:     params.TestnetChainConfig,
-		Difficulty: big.NewInt(1),
-	}
-	gspec.MustCommit(db)
-	engine := prometheus.New(params.TestnetChainConfig.Prometheus,db)
-	blockchain, err := core.NewBlockChain(db, gspec.Config, engine, vm.Config{})
+	engine := prometheus.New(params.TestnetChainConfig.Prometheus, testdb)
+	blockchain, err := core.NewBlockChain(testdb, params.TestnetChainConfig, engine, vm.Config{})
 	if err != nil {
 		panic(err)
 	}
@@ -42,9 +45,9 @@ func (bproc) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) 
 	return nil, nil, new(big.Int), nil
 }
 
-var datadirDefaultKeyStore = "keystore"           // Path within the datadir to the keystore
+var datadirDefaultKeyStore = "keystore" // Path within the datadir to the keystore
 
-func MockAccountManager(useLightweightKDF bool,keyStoreDir string,dataDir string) (*accounts.Manager, string, error) {
+func MockAccountManager(useLightweightKDF bool, keyStoreDir string, dataDir string) (*accounts.Manager, string, error) {
 	scryptN := keystore.StandardScryptN
 	scryptP := keystore.StandardScryptP
 	if useLightweightKDF {

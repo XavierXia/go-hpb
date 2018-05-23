@@ -84,7 +84,7 @@ func SubmitTx(args SendTxArgs) (common.Hash, error) {
 		return common.Hash{}, err
 	}
 	//3.call tx_pool's addTx() push tx into tx_pool.
-	if err := GetTxPool().AddTxLocked(signed); err != nil {
+	if err := GetTxPool().AddTx(signed); err != nil {
 		return common.Hash{},err
 	}
 	//4.return the transaction's hash.
@@ -111,7 +111,7 @@ func SubmitRawTx(encodedTx hexutil.Bytes) (common.Hash, error) {
 		return common.Hash{}, err
 	}
 	//2.call tx_pool's addTx() push tx into tx_pool.
-	if err := GetTxPool().AddTxLocked(tx); err != nil {
+	if err := GetTxPool().AddTx(tx); err != nil {
 		return common.Hash{},err
 	}
 	//3.return the transaction's hash.
