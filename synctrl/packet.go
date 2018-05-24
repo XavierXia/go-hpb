@@ -17,77 +17,86 @@
 package synctrl
 
 import (
+	"fmt"
 	"github.com/hpb-project/go-hpb/blockchain/types"
 )
 
 const (
-	Pk_Header          = 0x00
-	Pk_Body            = 0x01
-	Pk_Receipt         = 0x02
-	Pk_State           = 0x03
+	pk_Header          = 0x00
+	pk_Body            = 0x01
+	pk_Receipt         = 0x02
+	pk_State           = 0x03
 )
 
 type pkFactory struct {
 }
 
-func (this pkFactory) Create(tp int) packet {
+func (this pkFactory) create(tp int) dataPack {
 	switch tp {
-	case Pk_Header:
-		return new(pk_header)
-	case Pk_Body:
-		return new(pk_body)
-	case Pk_Receipt:
-		return new(pk_receipt)
-	case Pk_State:
-		return new(pk_state)
+	case pk_Header:
+		return new(headerPack)
+	case pk_Body:
+		return new(bodyPack)
+	case pk_Receipt:
+		return new(receiptPack)
+	case pk_State:
+		return new(statePack)
 	default:
 		return nil
 	}
 }
+// peerDropFn is a callback type for dropping a peer detected as malicious.
+type peerDropFn func(id string)
 
-type packet interface {
+// dataPack is a data message returned by a peer for some query.
+type dataPack interface {
 	PeerId() string
 	Items() int
+	Stats() string
 }
 
 // headerPack is a batch of block headers returned by a peer.
-type pk_header struct {
+type headerPack struct {
 	peerId  string
 	headers []*types.Header
 }
 
-func (p *pk_header) PeerId() string { return p.peerId }
-func (p *pk_header) Items() int     { return len(p.headers) }
+func (p *headerPack) PeerId() string { return p.peerId }
+func (p *headerPack) Items() int     { return len(p.headers) }
+func (p *headerPack) Stats() string  { return fmt.Sprintf("%d", len(p.headers)) }
 
 // bodyPack is a batch of block bodies returned by a peer.
-type pk_body struct {
+type bodyPack struct {
 	peerId       string
 	transactions [][]*types.Transaction
 	uncles       [][]*types.Header
 }
 
-func (p *pk_body) PeerId() string { return p.peerId }
-func (p *pk_body) Items() int {
+func (p *bodyPack) PeerId() string { return p.peerId }
+func (p *bodyPack) Items() int {
 	if len(p.transactions) <= len(p.uncles) {
 		return len(p.transactions)
 	}
 	return len(p.uncles)
 }
+func (p *bodyPack) Stats() string { return fmt.Sprintf("%d:%d", len(p.transactions), len(p.uncles)) }
 
 // receiptPack is a batch of receipts returned by a peer.
-type pk_receipt struct {
+type receiptPack struct {
 	peerId   string
 	receipts [][]*types.Receipt
 }
 
-func (p *pk_receipt) PeerId() string { return p.peerId }
-func (p *pk_receipt) Items() int     { return len(p.receipts) }
+func (p *receiptPack) PeerId() string { return p.peerId }
+func (p *receiptPack) Items() int     { return len(p.receipts) }
+func (p *receiptPack) Stats() string  { return fmt.Sprintf("%d", len(p.receipts)) }
 
 // statePack is a batch of states returned by a peer.
-type pk_state struct {
+type statePack struct {
 	peerId string
 	states [][]byte
 }
 
-func (p *pk_state) PeerId() string { return p.peerId }
-func (p *pk_state) Items() int     { return len(p.states) }
+func (p *statePack) PeerId() string { return p.peerId }
+func (p *statePack) Items() int     { return len(p.states) }
+func (p *statePack) Stats() string  { return fmt.Sprintf("%d", len(p.states)) }
