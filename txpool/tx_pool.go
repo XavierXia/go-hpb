@@ -88,16 +88,21 @@ type TxPoolConfig struct {
 	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued
 }
 
+var (
+	evictionInterval    = time.Minute     // Time interval to check for evictable transactions
+	statsReportInterval = 5 * time.Second // Time interval to report transaction pool stats
+)
+
 // DefaultTxPoolConfig contains the default configurations for the transaction
 // pool.
 var DefaultTxPoolConfig = TxPoolConfig{
 	PriceLimit: 1,
 	PriceBump:  10,
 
-	AccountSlots: 100,
-	GlobalSlots:  100000,
-	AccountQueue: 200,
-	GlobalQueue:  200000,
+	AccountSlots: 10000,
+	GlobalSlots:  1000000,
+	AccountQueue: 20000,
+	GlobalQueue:  2000000,
 
 	Lifetime: 3 * time.Minute,
 }
@@ -210,10 +215,10 @@ func (pool *TxPool) loop() {
 	// Start the stats reporting and transaction eviction tickers
 	var prevPending, prevQueued int
 
-	evict := time.NewTicker(time.Minute)
+	evict := time.NewTicker(evictionInterval)
 	defer evict.Stop()
 
-	report := time.NewTicker(time.Second * 5)
+	report := time.NewTicker(statsReportInterval)
 	defer report.Stop()
 
 	// Track the previous head headers for transaction reorgs
