@@ -67,7 +67,8 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 
 	// Iterate over and process the individual transactions
 	//FIXME
-	for i, tx := range block.Transactions() {
+	txs := txpool.TransactionsWrapper(block.Transactions())
+	for i, tx := range txs {
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
 		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, totalUsedGas, cfg)
 		if err != nil {
@@ -86,7 +87,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-func ApplyTransaction(config *params.ChainConfig, bc *core.BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *big.Int, cfg vm.Config) (*types.Receipt, *big.Int, error) {
+func ApplyTransaction(config *params.ChainConfig, bc *core.BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *txpool.Transaction, usedGas *big.Int, cfg vm.Config) (*types.Receipt, *big.Int, error) {
 	msg, err := tx.AsMessage(txpool.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, nil, err
