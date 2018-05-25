@@ -44,8 +44,8 @@ var (
 	MaxStateFetch   = 384 // Amount of node state values to allow fetching per request
 
 	MaxForkAncestry  = 3 * params.EpochDuration // Maximum chain reorganisation
-	rttMinEstimate   = 2 * time.Second          // Minimum round-trip time to target for download requests
-	rttMaxEstimate   = 20 * time.Second         // Maximum rount-trip time to target for download requests
+	rttMinEstimate   = 2 * time.Second          // Minimum round-trip time to target for sync requests
+	rttMaxEstimate   = 20 * time.Second         // Maximum rount-trip time to target for sync requests
 	rttMinConfidence = 0.1                      // Worse confidence factor in our estimated RTT value
 	ttlScaling       = 3                        // Constant scaling factor for RTT -> TTL conversion
 	ttlLimit         = time.Minute              // Maximum TTL allowance to prevent reaching crazy timeouts
@@ -55,10 +55,10 @@ var (
 	qosTuningImpact  = 0.25 // Impact that a new tuning target has on the previous value
 
 	maxQueuedHeaders  = 32 * 1024 // Maximum number of headers to queue for import (DOS protection)
-	maxHeadersProcess = 2048      // Number of header download results to import at once into the chain
-	maxResultsProcess = 2048      // Number of content download results to import at once into the chain
+	maxHeadersProcess = 2048      // Number of header sync results to import at once into the chain
+	maxResultsProcess = 2048      // Number of content sync results to import at once into the chain
 
-	fsHeaderCheckFrequency = 100        // Verification frequency of the downloaded headers during fast sync
+	fsHeaderCheckFrequency = 100        // Verification frequency of the sync headers during fast sync
 	fsHeaderSafetyNet      = 2048       // Number of headers to discard in case a chain violation is detected
 	fsHeaderForceVerify    = 24         // Number of headers to verify before and after the pivot to accept it
 	fsPivotInterval        = 256        // Number of headers out of which to randomize the pivot point
@@ -71,20 +71,20 @@ var (
 	errUnknownPeer             = errors.New("peer is unknown or unhealthy")
 	errBadPeer                 = errors.New("action from bad peer ignored")
 	errStallingPeer            = errors.New("peer is stalling")
-	errNoPeers                 = errors.New("no peers to keep download active")
+	errNoPeers                 = errors.New("no peers to keep sync active")
 	errTimeout                 = errors.New("timeout")
 	errEmptyHeaderSet          = errors.New("empty header set by peer")
-	errPeersUnavailable        = errors.New("no peers available or all tried for download")
+	errPeersUnavailable        = errors.New("no peers available or all tried for sync")
 	errInvalidAncestor         = errors.New("retrieved ancestor is invalid")
 	errInvalidChain            = errors.New("retrieved hash chain is invalid")
 	errInvalidBlock            = errors.New("retrieved block is invalid")
 	errInvalidBody             = errors.New("retrieved block body is invalid")
 	errInvalidReceipt          = errors.New("retrieved receipt is invalid")
-	errCancelBlockFetch        = errors.New("block download canceled (requested)")
-	errCancelHeaderFetch       = errors.New("block header download canceled (requested)")
-	errCancelBodyFetch         = errors.New("block body download canceled (requested)")
-	errCancelReceiptFetch      = errors.New("receipt download canceled (requested)")
-	errCancelStateFetch        = errors.New("state data download canceled (requested)")
+	errCancelBlockFetch        = errors.New("block sync canceled (requested)")
+	errCancelHeaderFetch       = errors.New("block header sync canceled (requested)")
+	errCancelBodyFetch         = errors.New("block body sync canceled (requested)")
+	errCancelReceiptFetch      = errors.New("receipt sync canceled (requested)")
+	errCancelStateFetch        = errors.New("state data sync canceled (requested)")
 	errCancelHeaderProcessing  = errors.New("header processing canceled (requested)")
 	errCancelContentProcessing = errors.New("content processing canceled (requested)")
 	errNoSyncActive            = errors.New("no sync active")
@@ -141,6 +141,18 @@ type BlockChain interface {
 
 type syncStrategy interface {
 	progress() hpbinter.SyncProgress
+	synchronising() bool
+	registerPeer(id string, version uint, peer Peer) error
+	registerLightPeer(id string, version uint, peer LightPeer) error
+	unregisterPeer(id string) error
+	start(id string, head common.Hash, td *big.Int, mode SyncMode) error
+	cancel()
+	terminate()
+
+	deliverHeaders(id string, headers []*types.Header) (err error)
+	deliverBodies(id string, transactions [][]*types.Transaction, uncles [][]*types.Header) (err error)
+	deliverReceipts(id string, receipts [][]*types.Receipt) (err error)
+	deliverNodeData(id string, data [][]byte) (err error)
 }
 
 type Syncer struct {
@@ -150,13 +162,13 @@ type Syncer struct {
 	mux  *event.TypeMux // Event multiplexer to announce sync operation events
 
 	sch   *scheduler   // Scheduler for selecting the hashes to syncer
-	peers   *peerSet // Set of active peers from which download can proceed
+	peers   *peerSet // Set of active peers from which sync can proceed
 	stateDB hpbdb.Database
 
 	fsPivotLock  *types.Header // Pivot header on critical section entry (cannot change between retries)
 	fsPivotFails uint32        // Number of subsequent fast sync failures in the critical section
 
-	rttEstimate   uint64 // Round trip time to target for download requests
+	rttEstimate   uint64 // Round trip time to target for sync requests
 	rttConfidence uint64 // Confidence in the estimated RTT (unit: millionths to allow atomic ops)
 
 	// Statistics
@@ -231,9 +243,11 @@ func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightc
 	}
 	switch mode {
 	case FullSync:
-		syn.strategy = NewFullsync(lightchain)
+		syn.strategy = newFullsync(syn)
 	case FastSync:
-		syn.strategy = NewFastsync()
+		syn.strategy = newFastsync(syn)
+	case LightSync:
+		syn.strategy = newLightsync(syn)
 	default:
 		syn.strategy = nil
 	}
@@ -242,9 +256,9 @@ func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightc
 	return syn
 }
 
-// Synchronise tries to sync up our local block chain with a remote peer, both
+// Start tries to sync up our local block chain with a remote peer, both
 // adding various sanity checks as well as wrapping it with various log entries.
-func (this *Syncer) Synchronise(id string, head common.Hash, td *big.Int, mode SyncMode) error {
+func (this *Syncer) Start(id string, head common.Hash, td *big.Int, mode SyncMode) error {
 	err := this.synchronise(id, head, td, mode)
 	switch err {
 	case nil:
@@ -253,7 +267,7 @@ func (this *Syncer) Synchronise(id string, head common.Hash, td *big.Int, mode S
 	case errTimeout, errBadPeer, errStallingPeer,
 		errEmptyHeaderSet, errPeersUnavailable, errProVLowerBase,
 		errInvalidAncestor, errInvalidChain:
-		log.Warn("Synchronisation failed, dropping peer", "peer", id, "err", err)
+		log.Warn("Synchronisation failed, dropping peer", "peer", id, "err",`` err)
 		this.dropPeer(id)
 
 	default:
@@ -263,7 +277,7 @@ func (this *Syncer) Synchronise(id string, head common.Hash, td *big.Int, mode S
 }
 
 // Terminate interrupts the syn, canceling all pending operations.
-// The downloader cannot be reused after calling Terminate.
+// The syncer cannot be reused after calling Terminate.
 func (this *Syncer) Terminate() {
 	// Close the termination channel (make sure double close is allowed)
 	this.quitLock.Lock()
@@ -274,7 +288,7 @@ func (this *Syncer) Terminate() {
 	}
 	this.quitLock.Unlock()
 
-	// Cancel any pending download requests
+	// Cancel any pending sync requests
 	this.Cancel()
 }
 
@@ -405,7 +419,7 @@ func (this *Syncer) stateFetcher() {
 	}
 }
 
-// syncState starts downloading state with the given root hash.
+// syncState starts syncing state with the given root hash.
 func (this *Syncer) syncState(root common.Hash) *stateSync {
 	s := newStateSync(this, root)
 	select {
@@ -502,7 +516,7 @@ func (this *Syncer) runStateSync(s *stateSync) *stateSync {
 			if active[req.peer.id] != req {
 				continue
 			}
-			// Move the timed out data back into the download queue
+			// Move the timed out data back into the sync queue
 			finished = append(finished, req)
 			delete(active, req.peer.id)
 
@@ -551,7 +565,7 @@ func (this *Syncer) qosTuner() {
 		atomic.StoreUint64(&this.rttConfidence, conf)
 
 		// Log the new QoS values and sleep until the next RTT
-		log.Debug("Recalculated downloader QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
+		log.Debug("Recalculated syncer QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
 		select {
 		case <-this.quitCh:
 			return
@@ -560,7 +574,7 @@ func (this *Syncer) qosTuner() {
 	}
 }
 
-// qosReduceConfidence is meant to be called when a new peer joins the downloader's
+// qosReduceConfidence is meant to be called when a new peer joins the syncer's
 // peer set, needing to reduce the confidence we have in out QoS estimates.
 func (this *Syncer) qosReduceConfidence() {
 	// If we have a single peer, confidence is always 1
@@ -585,7 +599,7 @@ func (this *Syncer) qosReduceConfidence() {
 	atomic.StoreUint64(&this.rttConfidence, conf)
 
 	rtt := time.Duration(atomic.LoadUint64(&this.rttEstimate))
-	log.Debug("Relaxed downloader QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
+	log.Debug("Relaxed syncer QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
 }
 
 // requestTTL returns the current timeout allowance for a single sync request
