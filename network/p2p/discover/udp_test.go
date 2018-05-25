@@ -60,6 +60,8 @@ type udpTest struct {
 	sent                [][]byte
 	localkey, remotekey *ecdsa.PrivateKey
 	remoteaddr          *net.UDPAddr
+
+	nodeType            NodeType
 }
 
 func newUDPTest(t *testing.T) *udpTest {
@@ -69,6 +71,7 @@ func newUDPTest(t *testing.T) *udpTest {
 		localkey:   newkey(),
 		remotekey:  newkey(),
 		remoteaddr: &net.UDPAddr{IP: net.IP{10, 0, 1, 99}, Port: 30303},
+		nodeType: PreNode,
 	}
 	test.table, test.udp, _ = newUDP(test.localkey, test.pipe, nil, "", nil)
 	return test
@@ -247,6 +250,7 @@ func TestUDP_findnode(t *testing.T) {
 	// findnode won't be accepted otherwise.
 	test.table.db.updateNode(NewNode(
 		PubkeyID(&test.remotekey.PublicKey),
+		test.nodeType,
 		test.remoteaddr.IP,
 		uint16(test.remoteaddr.Port),
 		99,

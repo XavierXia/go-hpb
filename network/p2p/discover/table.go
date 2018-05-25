@@ -69,6 +69,9 @@ type Table struct {
 
 	net  transport
 	self *Node // metadata of the local node
+
+	RandNonce []byte  //本地产生的随机码
+	AuthNode   map[NodeID]*Node  //通过认证的远端Node集合
 }
 
 type bondproc struct {
@@ -97,16 +100,32 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO: 检查BOE连接情况
+	//检查本端BOE链接情况，确定真实的声明节点类型
+	//1.调用BOE接口，传入随机数
+	//2.返回结果和计算结果是否一一致。
+	//3.结果一致则认证通过。声明节点类型应该设置为AuthNode
+	nodeType := LightNode
+
 	tab := &Table{
 		net:        t,
 		db:         db,
-		self:       NewNode(ourID, ourAddr.IP, uint16(ourAddr.Port), uint16(ourAddr.Port)),
+		self:       NewNode(ourID, nodeType, ourAddr.IP, uint16(ourAddr.Port), uint16(ourAddr.Port)),
 		bonding:    make(map[NodeID]*bondproc),
 		bondslots:  make(chan struct{}, maxBondingPingPongs),
 		refreshReq: make(chan chan struct{}),
 		closeReq:   make(chan struct{}),
 		closed:     make(chan struct{}),
 	}
+
+	//生成本节点的随机数，用于验证远端节点BOE是否存在
+	tab.RandNonce = make([]byte,32)
+	rand.Read(tab.RandNonce[:])
+	log.Info("init random nonce","RandNonce",tab.RandNonce)
+
+	tab.AuthNode = make(map[NodeID]*Node)
+
 	for i := 0; i < cap(tab.bondslots); i++ {
 		tab.bondslots <- struct{}{}
 	}
@@ -222,6 +241,22 @@ func (tab *Table) Resolve(targetID NodeID) *Node {
 			return n
 		}
 	}
+	return nil
+}
+
+// searches for a specific node with the given ID.
+// It returns nil if the node could not be found.
+func (tab *Table) Findout(targetID NodeID) *Node {
+	// If the node is present in the local table, no
+	// network interaction is required.
+	hash := crypto.Keccak256Hash(targetID[:])
+	tab.mutex.Lock()
+	cl := tab.closest(hash, 1)
+	tab.mutex.Unlock()
+	if len(cl.entries) > 0 && cl.entries[0].ID == targetID {
+		return cl.entries[0]
+	}
+
 	return nil
 }
 
@@ -521,7 +556,7 @@ func (tab *Table) pingpong(w *bondproc, pinged bool, id NodeID, addr *net.UDPAdd
 		tab.net.waitping(id)
 	}
 	// Bonding succeeded, update the node database.
-	w.n = NewNode(id, addr.IP, uint16(addr.Port), tcpPort)
+	w.n = NewNode(id, LightNode, addr.IP, uint16(addr.Port), tcpPort)
 	tab.db.updateNode(w.n)
 	close(w.done)
 }

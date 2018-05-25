@@ -16,6 +16,7 @@
 
 package p2p
 
+/*
 import (
 	"go/types"
 	"github.com/hpb-project/ghpb/common"
@@ -144,5 +145,4 @@ func (hd *HandleHpb) handleMsg(p *Peer) error {
 	}
 	return nil
 }
-
-
+*/

@@ -32,7 +32,7 @@ import (
 	"github.com/hpb-project/ghpb/common/rlp"
 )
 
-const Version = 4
+const Version = 0x01
 
 // Errors
 var (
@@ -71,6 +71,9 @@ type (
 		Version    uint
 		From, To   rpcEndpoint
 		Expiration uint64
+
+		TYPE      NodeType // 声明的节点类型
+		ReqNonce  []byte   //硬件接入验证请求
 		// Ignore additional fields (for forward compatibility).
 		Rest []rlp.RawValue `rlp:"tail"`
 	}
@@ -80,10 +83,12 @@ type (
 		// This field should mirror the UDP envelope address
 		// of the ping packet, which provides a way to discover the
 		// the external address (after NAT).
-		To rpcEndpoint
-
+		From, To rpcEndpoint
 		ReplyTok   []byte // This contains the hash of the ping packet.
 		Expiration uint64 // Absolute timestamp at which the packet becomes invalid.
+
+		NodeType   uint8  // 声明的节点类型
+		RespNonce  []byte //硬件验证签名结果
 		// Ignore additional fields (for forward compatibility).
 		Rest []rlp.RawValue `rlp:"tail"`
 	}
@@ -109,12 +114,13 @@ type (
 		UDP uint16 // for discovery protocol
 		TCP uint16 // for RLPx protocol
 		ID  NodeID
+		TYPE NodeType // 声明的节点类型
 	}
 
 	rpcEndpoint struct {
-		IP  net.IP // len 4 for IPv4 or 16 for IPv6
-		UDP uint16 // for discovery protocol
-		TCP uint16 // for RLPx protocol
+		IP   net.IP // len 4 for IPv4 or 16 for IPv6
+		UDP  uint16 // for discovery protocol
+		TCP  uint16 // for RLPx protocol
 	}
 )
 
@@ -136,7 +142,7 @@ func (t *udp) nodeFromRPC(sender *net.UDPAddr, rn rpcNode) (*Node, error) {
 	if t.netrestrict != nil && !t.netrestrict.Contains(rn.IP) {
 		return nil, errors.New("not contained in netrestrict whitelist")
 	}
-	n := NewNode(rn.ID, rn.IP, rn.UDP, rn.TCP)
+	n := NewNode(rn.ID, rn.TYPE, rn.IP, rn.UDP, rn.TCP)
 	err := n.validateComplete()
 	return n, err
 }
@@ -240,7 +246,7 @@ func newUDP(priv *ecdsa.PrivateKey, c conn, natm nat.Interface, nodeDBPath strin
 	realaddr := c.LocalAddr().(*net.UDPAddr)
 	if natm != nil {
 		if !realaddr.IP.IsLoopback() {
-			go nat.Map(natm, udp.closing, "udp", realaddr.Port, realaddr.Port, "ethereum discovery")
+			go nat.Map(natm, udp.closing, "udp", realaddr.Port, realaddr.Port, "hpb discovery")
 		}
 		// TODO: react to external IP changes over time.
 		if ext, err := natm.ExternalIP(); err == nil {
@@ -275,7 +281,11 @@ func (t *udp) ping(toid NodeID, toaddr *net.UDPAddr) error {
 		From:       t.ourEndpoint,
 		To:         makeEndpoint(toaddr, 0), // TODO: maybe use known TCP port from DB
 		Expiration: uint64(time.Now().Add(expiration).Unix()),
+		TYPE:       t.self.TYPE,//声明本节点类型，需对方确认。
+		ReqNonce:   t.RandNonce,//本端随机数，用于确认远端节点类型。
 	})
+
+	log.Info("Send ping msg","ToNodeID",toid,"Nonce",t.RandNonce)
 	return <-errc
 }
 
@@ -559,11 +569,18 @@ func (req *ping) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) er
 	if expired(req.Expiration) {
 		return errExpired
 	}
+
+	//需要对req.ReqNonce进行本地硬件签名，返回给远端。使得远端认证本端prenode
+	//数据需要调用BOElib返回结果
+	req.ReqNonce[0]=0x00
 	t.send(from, pongPacket, &pong{
+		From:       t.ourEndpoint,
 		To:         makeEndpoint(from, req.From.TCP),
 		ReplyTok:   mac,
 		Expiration: uint64(time.Now().Add(expiration).Unix()),
+		RespNonce :req.ReqNonce,
 	})
+
 	if !t.handleReply(fromID, pingPacket, req) {
 		// Note: we're ignoring the provided IP address right now
 		go t.bond(true, fromID, from, req.From.TCP)
@@ -577,6 +594,19 @@ func (req *pong) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) er
 	if expired(req.Expiration) {
 		return errExpired
 	}
+
+	// TODO:验证远端发来的签名信息
+	//收到远端硬件签名的数据，比较通过后，认为远端节点有硬件支持为AuthNode
+	//t.RandNonce  ?=? libboe(req.RespNonce)
+	//nodeType := LightNode
+	nodeType := AuthNode
+	if n, ok := t.AuthNode[fromID]; ok {
+		n.TYPE = nodeType
+	} else {
+		t.AuthNode[fromID] = NewNode(fromID,nodeType,from.IP,uint16(from.Port),req.From.TCP)
+	}
+	log.Info("Recv pong msg","FromNodeID",fromID,"Nonce",req.RespNonce,"NodeType",t.AuthNode[fromID].TYPE.ToString())
+
 	if !t.handleReply(fromID, pongPacket, req) {
 		return errUnsolicitedReply
 	}

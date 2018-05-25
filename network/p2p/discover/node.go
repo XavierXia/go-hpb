@@ -37,13 +37,42 @@ import (
 
 const NodeIDBits = 512
 
+type NodeType  uint8
+// 节点类型
+const(
+	LightNode  NodeType = 0x00  //默认节点类型，没有通过硬件认证的节点类型都是默认类型 UnknownNode
+
+	AuthNode   NodeType = 0x30  //经过认证的节点
+	PreNode    NodeType = 0x31  //候选节点
+	HpNode     NodeType = 0x60  //高性能节点
+
+	BootNode   NodeType = 0xA0  //启动节点
+)
+
+func (nt NodeType)ToString() string {
+	switch nt {
+	case LightNode:
+		return "LightNode"
+	case AuthNode:
+		return "AuthNode"
+	case PreNode:
+		return "PreNode"
+	case HpNode:
+		return "HpNode"
+	case BootNode:
+		return "BootNode"
+	}
+	return "UnknownNode"
+}
+
+
 // Node represents a host on the network.
 // The fields of Node may not be modified.
 type Node struct {
-	IP       net.IP // len 4 for IPv4 or 16 for IPv6
-	UDP, TCP uint16 // port numbers
-	ID       NodeID // the node's public key
-
+	IP       net.IP    // len 4 for IPv4 or 16 for IPv6
+	UDP, TCP uint16    // port numbers
+	ID       NodeID    // the node's public key
+	TYPE     NodeType  // 默认为轻节点，通过硬件认证的为候选节点.节点类型需要全网确认.
 	// This is a cached copy of sha3(ID) which is used for node
 	// distance calculations. This is part of Node in order to make it
 	// possible to write tests that need a node at a certain distance.
@@ -58,7 +87,7 @@ type Node struct {
 
 // NewNode creates a new node. It is mostly meant to be used for
 // testing purposes.
-func NewNode(id NodeID, ip net.IP, udpPort, tcpPort uint16) *Node {
+func NewNode(id NodeID, nodeType NodeType, ip net.IP, udpPort, tcpPort uint16) *Node {
 	if ipv4 := ip.To4(); ipv4 != nil {
 		ip = ipv4
 	}
@@ -67,6 +96,7 @@ func NewNode(id NodeID, ip net.IP, udpPort, tcpPort uint16) *Node {
 		UDP: udpPort,
 		TCP: tcpPort,
 		ID:  id,
+		TYPE:nodeType,
 		sha: crypto.Keccak256Hash(id[:]),
 	}
 }
@@ -125,8 +155,8 @@ var incompleteNodeURL = regexp.MustCompile("(?i)^(?:hnode://)?([0-9a-f]+)$")
 //
 // For incomplete nodes, the designator must look like one of these
 //
-//    hnode://<hex node id>
-//    <hex node id>
+//    hnode://<hex node id>&<int8 node role>
+//    <hex node id>&<int8 node role>
 //
 // For complete nodes, the node ID is encoded in the username portion
 // of the URL, separated from the host by an @ sign. The hostname can
@@ -139,14 +169,14 @@ var incompleteNodeURL = regexp.MustCompile("(?i)^(?:hnode://)?([0-9a-f]+)$")
 // a node with IP address 10.3.58.6, TCP listening port 30303
 // and UDP discovery port 30301.
 //
-//    hnode://<hex node id>@10.3.58.6:30303?discport=30301
+//    hnode://<hex node id>&<int8 node role>@10.3.58.6:30303?discport=30301
 func ParseNode(rawurl string) (*Node, error) {
 	if m := incompleteNodeURL.FindStringSubmatch(rawurl); m != nil {
 		id, err := HexID(m[1])
 		if err != nil {
 			return nil, fmt.Errorf("invalid node ID (%v)", err)
 		}
-		return NewNode(id, nil, 0, 0), nil
+		return NewNode(id, LightNode,nil, 0, 0), nil
 	}
 	return parseComplete(rawurl)
 }
@@ -195,7 +225,7 @@ func parseComplete(rawurl string) (*Node, error) {
 			return nil, errors.New("invalid discport in query")
 		}
 	}
-	return NewNode(id, ip, uint16(udpPort), uint16(tcpPort)), nil
+	return NewNode(id, LightNode,ip, uint16(udpPort), uint16(tcpPort)), nil
 }
 
 // MustParseNode parses a node URL. It panics if the URL is not valid.
@@ -431,26 +461,37 @@ func hashAtDistance(a common.Hash, n int) (b common.Hash) {
 	return b
 }
 
-///////////////////////////////////////////////////////////////
-// NodeType is node type used in peer management
-const(
-	LightNode  uint8 = 0x00
-	PreNode    uint8 = 0x30
-	HpNode     uint8 = 0x60
-	BootNode   uint8 = 0x90
-)
 
-func NodeType2String(nt uint8) string {
-	switch nt {
-	case LightNode:
-		return "LightNode"
-	case PreNode:
-		return "PreNode"
-	case HpNode:
-		return "HpNode"
-	case BootNode:
-		return "BootNode"
+/*
+// remove duplicate nodes by id.
+func nodesDuplicate(nodes []*Node) []*Node {
+	var x []*Node
+	for _, i := range nodes {
+		if len(x) == 0 {
+			x = append(x, i)
+		} else {
+			for k, v := range x {
+				if i.ID == v.ID {
+					break
+				}
+				if k == len(x) - 1 {
+					x = append(x, i)
+				}
+			}
+		}
 	}
-	return "UnknownNode"
+	return x
 }
 
+// filter out bootNodes
+func filterBootNodes(nodes []*Node) []*Node {
+	var x []*Node
+	for _, i := range nodes {
+		if i.TYPE == BootNode {
+			continue
+		}
+		x = append(x, i)
+	}
+	return x
+}
+*/

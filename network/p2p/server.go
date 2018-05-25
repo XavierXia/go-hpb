@@ -158,10 +158,10 @@ type Server struct {
 	running bool
 
 	ntab         discoverTable
+
 	listener     net.Listener
 	ourHandshake *protoHandshake
 	lastLookup   time.Time
-	//DiscV5       *discv5.Network
 
 	// These are for Peers, PeerCount (and nothing else).
 	peerOp     chan peerOpFunc
@@ -175,8 +175,6 @@ type Server struct {
 	delpeer       chan peerDrop
 	loopWG        sync.WaitGroup // loop, listenLoop
 	peerFeed      event.Feed
-
-	local         NodeType
 }
 
 type peerOpFunc func(map[discover.NodeID]*Peer)
@@ -315,13 +313,13 @@ func (srv *Server) Self() *discover.Node {
 	if !srv.running {
 		return &discover.Node{IP: net.ParseIP("0.0.0.0")}
 	}
-	return srv.makeSelf(srv.listener, srv.ntab)
+	return srv.makeSelf(srv.listener)
 }
 
-func (srv *Server) makeSelf(listener net.Listener, ntab discoverTable) *discover.Node {
+func (srv *Server) makeSelf(listener net.Listener) *discover.Node {
 	// If the server's not running, return an empty node.
 	// If the node is running but discovery is off, manually assemble the node infos.
-	if ntab == nil {
+	if srv.ntab == nil {
 		// Inbound connections disabled, use zero address.
 		if listener == nil {
 			return &discover.Node{IP: net.ParseIP("0.0.0.0"), ID: discover.PubkeyID(&srv.PrivateKey.PublicKey)}
@@ -335,7 +333,7 @@ func (srv *Server) makeSelf(listener net.Listener, ntab discoverTable) *discover
 		}
 	}
 	// Otherwise return the discovery node.
-	return ntab.Self()
+	return srv.ntab.Self()
 }
 
 // Stop terminates the server and all active peer connections.
@@ -401,6 +399,7 @@ func (srv *Server) Start() (err error) {
 	if srv.NoDiscovery {
 		dynPeers = 0
 	}
+
 	dialer := newDialState(srv.StaticNodes, srv.BootstrapNodes, srv.ntab, dynPeers, srv.NetRestrict)
 
 	// handshake
@@ -417,6 +416,7 @@ func (srv *Server) Start() (err error) {
 	if srv.NoDial && srv.ListenAddr == "" {
 		log.Warn("P2P server will be useless, neither dialing nor listening")
 	}
+
 
 	srv.loopWG.Add(1)
 	go srv.run(dialer)
@@ -631,7 +631,7 @@ type tempError interface {
 // inbound connections.
 func (srv *Server) listenLoop() {
 	defer srv.loopWG.Done()
-	log.Info("RLPx listener up", "self", srv.makeSelf(srv.listener, srv.ntab))
+	log.Info("RLPx listener up", "self", srv.makeSelf(srv.listener))
 
 	// This channel acts as a semaphore limiting
 	// active inbound connections that are lingering pre-handshake.
@@ -815,7 +815,7 @@ func (srv *Server) NodeInfo() *NodeInfo {
 	// Gather and assemble the generic node infos
 	info := &NodeInfo{
 		Name:       srv.Name,
-		Local:      srv.local.String(),
+		Local:      node.TYPE.ToString(),
 		Hnode:      node.String(),
 		ID:         node.ID.String(),
 		IP:         node.IP.String(),
