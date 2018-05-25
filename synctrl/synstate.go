@@ -59,7 +59,7 @@ type stateSyncStats struct {
 // stateSync schedules requests for downloading a particular state trie defined
 // by a given state root.
 type stateSync struct {
-	syn    *syncer // syncer instance to access and manage current peerset
+	syn    *Syncer // syncer instance to access and manage current peerset
 
 	sched  *trie.TrieSync             // State trie sync scheduler defining the tasks
 	keccak hash.Hash                  // Keccak256 hasher to verify deliveries with
@@ -83,7 +83,7 @@ type stateTask struct {
 
 // newStateSync creates a new state trie download scheduler. This method does not
 // yet start the sync. The user needs to call run to initiate.
-func newStateSync(syn *syncer, root common.Hash) *stateSync {
+func newStateSync(syn *Syncer, root common.Hash) *stateSync {
 	return &stateSync{
 		syn:     syn,
 		sched:   state.NewStateSync(root, syn.stateDB),
@@ -188,8 +188,8 @@ func (s *stateSync) assignTasks() {
 	peers, _ := s.syn.peers.NodeDataIdlePeers()
 	for _, p := range peers {
 		// Assign a batch of fetches proportional to the estimated latency/bandwidth
-		cap := p.NodeDataCapacity(s.syn.RequestTTL())
-		req := &stateReq{peer: p, timeout: s.syn.RequestTTL()}
+		cap := p.NodeDataCapacity(s.syn.requestTTL())
+		req := &stateReq{peer: p, timeout: s.syn.requestTTL()}
 		s.fillTasks(cap, req)
 
 		// If the peer was assigned tasks to fetch, send the network request

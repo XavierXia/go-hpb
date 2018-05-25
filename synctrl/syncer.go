@@ -18,14 +18,16 @@ package synctrl
 
 import (
 	"errors"
+	"fmt"
 	"github.com/hpb-project/go-hpb/blockchain"
 	"github.com/hpb-project/go-hpb/blockchain/event"
 	"github.com/hpb-project/go-hpb/blockchain/types"
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/constant"
 	"github.com/hpb-project/go-hpb/common/log"
-	"github.com/hpb-project/go-hpb/network/p2p"
+	hpbinter "github.com/hpb-project/go-hpb/interface"
 	"github.com/hpb-project/go-hpb/storage"
+	"github.com/rcrowley/go-metrics"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -86,6 +88,7 @@ var (
 	errCancelHeaderProcessing  = errors.New("header processing canceled (requested)")
 	errCancelContentProcessing = errors.New("content processing canceled (requested)")
 	errNoSyncActive            = errors.New("no sync active")
+	errProVLowerBase           = errors.New(fmt.Sprintf("peer is lower than the current baseline version (need Minimum version >= %d)", params.ProtocolV111))
 	errTooOld                  = errors.New("peer doesn't speak recent enough protocol version (need version >= 62)")
 )
 
@@ -137,11 +140,10 @@ type BlockChain interface {
 }
 
 type syncStrategy interface {
-	start(peer *p2p.Peer)
-	stop()
+	progress() hpbinter.SyncProgress
 }
 
-type syncer struct {
+type Syncer struct {
 	strategy   syncStrategy
 
 	mode SyncMode       // Synchronisation mode defining the strategy used (per sync cycle)
@@ -164,7 +166,6 @@ type syncer struct {
 	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
 
 	lightchain LightChain
-	blockchain BlockChain
 
 	// Callbacks
 	dropPeer peerDropFn // Drops a peer for misbehaving
@@ -202,11 +203,31 @@ type syncer struct {
 	chainInsertHook  func([]*fetchResult)  // Method to call upon inserting a chain of blocks (possibly in multiple invocations)
 }
 
-func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightchain LightChain, dropPeer peerDropFn) *syncer {
+func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightchain LightChain,
+	dropPeer peerDropFn) *Syncer {
 	if lightchain == nil {
 		lightchain = core.InstanceBlockChain()
 	}
-	syn := &syncer{
+	syn := &Syncer{
+		mode:           mode,
+		stateDB:        stateDb,
+		mux:            mux,
+		sch:            newScheduler(),
+		peers:          newPeerSet(),
+		rttEstimate:    uint64(rttMaxEstimate),
+		rttConfidence:  uint64(1000000),
+		lightchain:     lightchain,
+		dropPeer:       dropPeer,
+		headerCh:       make(chan dataPack, 1),
+		bodyCh:         make(chan dataPack, 1),
+		receiptCh:      make(chan dataPack, 1),
+		bodyWakeCh:     make(chan bool, 1),
+		receiptWakeCh:  make(chan bool, 1),
+		headerProcCh:   make(chan []*types.Header, 1),
+		quitCh:         make(chan struct{}),
+		stateCh:        make(chan dataPack),
+		stateSyncStart: make(chan *stateSync),
+		trackStateReq:  make(chan *stateReq),
 	}
 	switch mode {
 	case FullSync:
@@ -221,9 +242,155 @@ func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightc
 	return syn
 }
 
+// Synchronise tries to sync up our local block chain with a remote peer, both
+// adding various sanity checks as well as wrapping it with various log entries.
+func (this *Syncer) Synchronise(id string, head common.Hash, td *big.Int, mode SyncMode) error {
+	err := this.synchronise(id, head, td, mode)
+	switch err {
+	case nil:
+	case errBusy:
+
+	case errTimeout, errBadPeer, errStallingPeer,
+		errEmptyHeaderSet, errPeersUnavailable, errProVLowerBase,
+		errInvalidAncestor, errInvalidChain:
+		log.Warn("Synchronisation failed, dropping peer", "peer", id, "err", err)
+		this.dropPeer(id)
+
+	default:
+		log.Warn("Synchronisation failed, retrying", "err", err)
+	}
+	return err
+}
+
+// Terminate interrupts the syn, canceling all pending operations.
+// The downloader cannot be reused after calling Terminate.
+func (this *Syncer) Terminate() {
+	// Close the termination channel (make sure double close is allowed)
+	this.quitLock.Lock()
+	select {
+	case <-this.quitCh:
+	default:
+		close(this.quitCh)
+	}
+	this.quitLock.Unlock()
+
+	// Cancel any pending download requests
+	this.Cancel()
+}
+
+// Synchronising returns whether the syn is currently retrieving blocks.
+func (this *Syncer) Synchronising() bool {
+	return atomic.LoadInt32(&this.synchronising) > 0
+}
+
+// RegisterPeer injects a new syn peer into the set of block source to be
+// used for fetching hashes and blocks from.
+func (this *Syncer) RegisterPeer(id string, version uint, peer Peer) error {
+
+	logger := log.New("peer", id)
+	logger.Trace("Registering sync peer")
+	if err := this.peers.Register(newPeerConnection(id, version, peer, logger)); err != nil {
+		logger.Error("Failed to register sync peer", "err", err)
+		return err
+	}
+	this.qosReduceConfidence()
+
+	return nil
+}
+
+// RegisterLightPeer injects a light client peer, wrapping it so it appears as a regular peer.
+func (this *Syncer) RegisterLightPeer(id string, version uint, peer LightPeer) error {
+	return this.RegisterPeer(id, version, &lightPeerWrapper{peer})
+}
+
+// UnregisterPeer remove a peer from the known list, preventing any action from
+// the specified peer. An effort is also made to return any pending fetches into
+// the queue.
+func (this *Syncer) UnregisterPeer(id string) error {
+	// Unregister the peer from the active peer set and revoke any fetch tasks
+	logger := log.New("peer", id)
+	logger.Trace("Unregistering sync peer")
+	if err := this.peers.Unregister(id); err != nil {
+		logger.Error("Failed to unregister sync peer", "err", err)
+		return err
+	}
+	this.sch.Revoke(id)
+
+	// If this peer was the master peer, abort sync immediately
+	this.cancelLock.RLock()
+	master := id == this.cancelPeer
+	this.cancelLock.RUnlock()
+
+	if master {
+		this.Cancel()
+	}
+	return nil
+}
+
+// Cancel cancels all of the operations and resets the scheduler. It returns true
+// if the cancel operation was completed.
+func (this *Syncer) Cancel() {
+	// Close the current cancel channel
+	this.cancelLock.Lock()
+	if this.cancelCh != nil {
+		select {
+		case <-this.cancelCh:
+			// Channel was already closed
+		default:
+			close(this.cancelCh)
+		}
+	}
+	this.cancelLock.Unlock()
+}
+
+// DeliverHeaders injects a new batch of block headers received from a remote
+// node into the syn schedule.
+func (this *Syncer) DeliverHeaders(id string, headers []*types.Header) (err error) {
+	return this.deliver(id, this.headerCh, &headerPack{id, headers}, headerInMeter, headerDropMeter)
+}
+
+// DeliverBodies injects a new batch of block bodies received from a remote node.
+func (this *Syncer) DeliverBodies(id string, transactions [][]*types.Transaction, uncles [][]*types.Header) (err error) {
+	return this.deliver(id, this.bodyCh, &bodyPack{id, transactions, uncles}, bodyInMeter, bodyDropMeter)
+}
+
+// DeliverReceipts injects a new batch of receipts received from a remote node.
+func (this *Syncer) DeliverReceipts(id string, receipts [][]*types.Receipt) (err error) {
+	return this.deliver(id, this.receiptCh, &receiptPack{id, receipts}, receiptInMeter, receiptDropMeter)
+}
+
+// DeliverNodeData injects a new batch of node state data received from a remote node.
+func (this *Syncer) DeliverNodeData(id string, data [][]byte) (err error) {
+	return this.deliver(id, this.stateCh, &statePack{id, data}, stateInMeter, stateDropMeter)
+}
+
+// deliver injects a new batch of data received from a remote node.
+func (this *Syncer) deliver(id string, destCh chan dataPack, packet dataPack, inMeter, dropMeter metrics.Meter) (err error) {
+	// Update the delivery metrics for both good and failed deliveries
+	inMeter.Mark(int64(packet.Items()))
+	defer func() {
+		if err != nil {
+			dropMeter.Mark(int64(packet.Items()))
+		}
+	}()
+	// Deliver or abort if the sync is canceled while queuing
+	this.cancelLock.RLock()
+	cancel := this.cancelCh
+	this.cancelLock.RUnlock()
+	if cancel == nil {
+		return errNoSyncActive
+	}
+	select {
+	case destCh <- packet:
+		return nil
+	case <-cancel:
+		return errNoSyncActive
+	}
+}
+
 // stateFetcher manages the active state sync and accepts requests
 // on its behalf.
-func (this *syncer) stateFetcher() {
+func (this *Syncer) stateFetcher() {
 	for {
 		select {
 		case s := <-this.stateSyncStart:
@@ -239,7 +406,7 @@ func (this *syncer) stateFetcher() {
 }
 
 // syncState starts downloading state with the given root hash.
-func (this *syncer) syncState(root common.Hash) *stateSync {
+func (this *Syncer) syncState(root common.Hash) *stateSync {
 	s := newStateSync(this, root)
 	select {
 	case this.stateSyncStart <- s:
@@ -252,7 +419,7 @@ func (this *syncer) syncState(root common.Hash) *stateSync {
 
 // runStateSync runs a state synchronisation until it completes or another root
 // hash is requested to be switched over to.
-func (this *syncer) runStateSync(s *stateSync) *stateSync {
+func (this *Syncer) runStateSync(s *stateSync) *stateSync {
 	var (
 		active   = make(map[string]*stateReq) // Currently in-flight requests
 		finished []*stateReq                  // Completed or failed requests
@@ -370,15 +537,9 @@ func (this *syncer) runStateSync(s *stateSync) *stateSync {
 	}
 }
 
-func (this *syncer) start(peer *p2p.Peer) {
-	if this.strategy != nil {
-		this.strategy.start(peer)
-	}
-}
-
 // qosTuner is the quality of service tuning loop that occasionally gathers the
 // peer latency statistics and updates the estimated request round trip time.
-func (this *syncer) qosTuner() {
+func (this *Syncer) qosTuner() {
 	for {
 		// Retrieve the current median RTT and integrate into the previoust target RTT
 		rtt := time.Duration(float64(1-qosTuningImpact)*float64(atomic.LoadUint64(&this.rttEstimate)) + qosTuningImpact*float64(this.peers.medianRTT()))
@@ -399,13 +560,37 @@ func (this *syncer) qosTuner() {
 	}
 }
 
-// requestTTL returns the current timeout allowance for a single sync request
-// to finish under.
-func (this *syncer) RequestTTL() time.Duration {
-	return this.requestTTL()
+// qosReduceConfidence is meant to be called when a new peer joins the downloader's
+// peer set, needing to reduce the confidence we have in out QoS estimates.
+func (this *Syncer) qosReduceConfidence() {
+	// If we have a single peer, confidence is always 1
+	peers := uint64(this.peers.Len())
+	if peers == 0 {
+		// Ensure peer connectivity races don't catch us off guard
+		return
+	}
+	if peers == 1 {
+		atomic.StoreUint64(&this.rttConfidence, 1000000)
+		return
+	}
+	// If we have a ton of peers, don't drop confidence)
+	if peers >= uint64(qosConfidenceCap) {
+		return
+	}
+	// Otherwise drop the confidence factor
+	conf := atomic.LoadUint64(&this.rttConfidence) * (peers - 1) / peers
+	if float64(conf)/1000000 < rttMinConfidence {
+		conf = uint64(rttMinConfidence * 1000000)
+	}
+	atomic.StoreUint64(&this.rttConfidence, conf)
+
+	rtt := time.Duration(atomic.LoadUint64(&this.rttEstimate))
+	log.Debug("Relaxed downloader QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
 }
 
-func (this *syncer) requestTTL() time.Duration {
+// requestTTL returns the current timeout allowance for a single sync request
+// to finish under.
+func (this *Syncer) requestTTL() time.Duration {
 	var (
 		rtt  = time.Duration(atomic.LoadUint64(&this.rttEstimate))
 		conf = float64(atomic.LoadUint64(&this.rttConfidence)) / 1000000.0
@@ -415,44 +600,4 @@ func (this *syncer) requestTTL() time.Duration {
 		ttl = ttlLimit
 	}
 	return ttl
-}
-
-// UnregisterPeer remove a peer from the known list, preventing any action from
-// the specified peer. An effort is also made to return any pending fetches into
-// the queue.
-func (this *syncer) UnregisterPeer(id string) error {
-	// Unregister the peer from the active peer set and revoke any fetch tasks
-	logger := log.New("peer", id)
-	logger.Trace("Unregistering sync peer")
-	if err := this.peers.Unregister(id); err != nil {
-		logger.Error("Failed to unregister sync peer", "err", err)
-		return err
-	}
-	this.sch.Revoke(id)
-
-	// If this peer was the master peer, abort sync immediately
-	this.cancelLock.RLock()
-	master := id == this.cancelPeer
-	this.cancelLock.RUnlock()
-
-	if master {
-		this.Cancel()
-	}
-	return nil
-}
-
-// Cancel cancels all of the operations and resets the scheduler. It returns true
-// if the cancel operation was completed.
-func (this *syncer) Cancel() {
-	// Close the current cancel channel
-	this.cancelLock.Lock()
-	if this.cancelCh != nil {
-		select {
-		case <-this.cancelCh:
-			// Channel was already closed
-		default:
-			close(this.cancelCh)
-		}
-	}
-	this.cancelLock.Unlock()
 }

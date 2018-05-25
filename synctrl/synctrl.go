@@ -135,7 +135,7 @@ func NewSynCtrl(config *params.ChainConfig, mode SyncMode, networkId uint64, mux
 		txpool:      txpool,
 		chaindb:     chaindb,
 		chainconfig: config,
-		peers:       newPeerSet(),//todo
+		peers:       newPeerSet(),
 		newPeerCh:   make(chan *peer),//todo
 		noMorePeers: make(chan struct{}),
 		txsyncCh:    make(chan *txsync),

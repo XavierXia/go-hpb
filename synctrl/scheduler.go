@@ -95,8 +95,8 @@ type scheduler struct {
 	closed bool
 }
 
-// newQueue creates a new download queue for scheduling block retrieval.
-func newQueue() *scheduler {
+// newScheduler creates a new syn scheduler for scheduling block retrieval.
+func newScheduler() *scheduler {
 	lock := new(sync.Mutex)
 	return &scheduler{
 		headerPendPool:   make(map[string]*fetchRequest),
