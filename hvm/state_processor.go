@@ -25,7 +25,6 @@ import (
 	"github.com/hpb-project/ghpb/consensus"
 	"github.com/hpb-project/ghpb/core/state"
 	"github.com/hpb-project/ghpb/core/types"
-	"github.com/hpb-project/ghpb/core/vm"
 	"github.com/hpb-project/ghpb/core"
 	"github.com/hpb-project/go-hpb/txpool"
 )
@@ -56,7 +55,7 @@ func NewStateProcessor(config *params.ChainConfig, bc *core.BlockChain, engine c
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, *big.Int, error) {
+func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (types.Receipts, []*types.Log, *big.Int, error) {
 	var (
 		receipts     types.Receipts
 		totalUsedGas = big.NewInt(0)
@@ -70,7 +69,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	txs := txpool.TransactionsWrapper(block.Transactions())
 	for i, tx := range txs {
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
-		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, totalUsedGas, cfg)
+		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, totalUsedGas)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -87,18 +86,13 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-func ApplyTransaction(config *params.ChainConfig, bc *core.BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *txpool.Transaction, usedGas *big.Int, cfg vm.Config) (*types.Receipt, *big.Int, error) {
+func ApplyTransaction(config *params.ChainConfig, bc *core.BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *txpool.Transaction, usedGas *big.Int) (*types.Receipt, *big.Int, error) {
 	msg, err := tx.AsMessage(txpool.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, nil, err
 	}
-	// Create a new context to be used in the EVM environment
-	context := NewEVMContext(msg, header, bc, author)
-	// Create a new environment which holds all relevant information
-	// about the transaction and calling mechanisms.
-	vmenv := vm.NewEVM(context, statedb, config, cfg)
-	// Apply the transaction to the current state (included in the env)
-	_, gas, failed, err := ApplyMessage(vmenv, msg, gp)
+
+	_, gas, failed, err := ApplyMessage(bc,header,statedb,author,msg, gp)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -117,7 +111,7 @@ func ApplyTransaction(config *params.ChainConfig, bc *core.BlockChain, author *c
 	receipt.GasUsed = new(big.Int).Set(gas)
 	// if the transaction created a contract, store the creation address in the receipt.
 	if msg.To() == nil {
-		receipt.ContractAddress = crypto.CreateAddress(vmenv.Context.Origin, tx.Nonce())
+		receipt.ContractAddress = crypto.CreateAddress(msg.From(), tx.Nonce())
 	}
 
 	// Set the receipt logs and create a bloom for filtering
