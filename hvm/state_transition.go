@@ -87,34 +87,6 @@ type Message interface {
 	Data() []byte
 }
 
-// IntrinsicGas computes the 'intrinsic gas' for a message
-// with the given data.
-//
-// TODO convert to uint64
-func IntrinsicGas(data []byte, contractCreation bool) *big.Int {
-	igas := new(big.Int)
-	if contractCreation {
-		igas.SetUint64(params.TxGasContractCreation)
-	} else {
-		igas.SetUint64(params.TxGas)
-	}
-	if len(data) > 0 {
-		var nz int64
-		for _, byt := range data {
-			if byt != 0 {
-				nz++
-			}
-		}
-		m := big.NewInt(nz)
-		m.Mul(m, new(big.Int).SetUint64(params.TxDataNonZeroGas))
-		igas.Add(igas, m)
-		m.SetInt64(int64(len(data)) - nz)
-		m.Mul(m, new(big.Int).SetUint64(params.TxDataZeroGas))
-		igas.Add(igas, m)
-	}
-	return igas
-}
-
 // NewStateTransition initialises and returns a new state transition object.
 func NewStateTransition(msg Message, gp *GasPool, db *state.StateDB, header *types.Header, author *common.Address, blockChain *core.BlockChain) *StateTransition {
 	native := msg.To() != nil && db.GetCodeSize(msg.From()) == 0
@@ -150,7 +122,7 @@ func ApplyMessage(bc *core.BlockChain, header *types.Header, db *state.StateDB, 
 
 	contractCreation := msg.To() == nil
 	// Pay intrinsic gas
-	intrinsicGas := IntrinsicGas(st.data, contractCreation)
+	intrinsicGas := txpool.IntrinsicGas(st.data, contractCreation)
 	if intrinsicGas.BitLen() > 64 {
 		return nil, nil, false, vm.ErrOutOfGas
 	}

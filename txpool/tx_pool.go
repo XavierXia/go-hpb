@@ -34,7 +34,6 @@ import (
 	"github.com/hpb-project/go-hpb/event/eventhub"
 	"github.com/hpb-project/go-hpb/event/actor"
 	"github.com/hpb-project/go-hpb/event"
-	"github.com/hpb-project/go-hpb/hvm"
 )
 
 var (
@@ -497,7 +496,7 @@ func (pool *TxPool) add(tx *Transaction) (bool, error) {
 
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
 		// We've directly injected a replacement transaction, notify subsystems
-		eventhub.GlobalEventHub.Publish(&eventhub.Event{Publisher: pool.txPrePublisher, Message: event.TxPreEvent{tx}, Topic: event.TXPRE_TOPIC, Policy: eventhub.PublishPolicyAll})
+		eventhub.GlobalEventHub.Publish(&eventhub.Event{Publisher: pool.txPrePublisher, Message: TxPreEvent{tx}, Topic: event.TXPRE_TOPIC, Policy: eventhub.PublishPolicyAll})
 		return old != nil, nil
 	}
 	// New transaction isn't replacing a pending one, push into queue
@@ -557,11 +556,39 @@ func (pool *TxPool) validateTx(tx *Transaction) error {
 	if pool.currentState.GetBalance(from).Cmp(tx.Cost()) < 0 {
 		return ErrInsufficientFunds
 	}
-	intrGas := hvm.IntrinsicGas(tx.Data(), tx.To() == nil)
+	intrGas := IntrinsicGas(tx.Data(), tx.To() == nil)
 	if tx.Gas().Cmp(intrGas) < 0 {
 		return ErrIntrinsicGas
 	}
 	return nil
+}
+
+// IntrinsicGas computes the 'intrinsic gas' for a message
+// with the given data.
+//
+// TODO convert to uint64
+func IntrinsicGas(data []byte, contractCreation bool) *big.Int {
+	igas := new(big.Int)
+	if contractCreation {
+		igas.SetUint64(params.TxGasContractCreation)
+	} else {
+		igas.SetUint64(params.TxGas)
+	}
+	if len(data) > 0 {
+		var nz int64
+		for _, byt := range data {
+			if byt != 0 {
+				nz++
+			}
+		}
+		m := big.NewInt(nz)
+		m.Mul(m, new(big.Int).SetUint64(params.TxDataNonZeroGas))
+		igas.Add(igas, m)
+		m.SetInt64(int64(len(data)) - nz)
+		m.Mul(m, new(big.Int).SetUint64(params.TxDataZeroGas))
+		igas.Add(igas, m)
+	}
+	return igas
 }
 
 // enqueueTx inserts a new transaction into the non-executable transaction queue.
@@ -827,7 +854,7 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *Transac
 	pool.beats[addr] = time.Now()
 	pool.pendingState.SetNonce(addr, tx.Nonce()+1)
 
-	eventhub.GlobalEventHub.Publish(&eventhub.Event{Publisher: pool.txPrePublisher, Message: event.TxPreEvent{tx}, Topic: event.TXPRE_TOPIC, Policy: eventhub.PublishPolicyAll})
+	eventhub.GlobalEventHub.Publish(&eventhub.Event{Publisher: pool.txPrePublisher, Message: TxPreEvent{tx}, Topic: event.TXPRE_TOPIC, Policy: eventhub.PublishPolicyAll})
 }
 
 // stats retrieves the current pool stats, namely the number of pending and the
