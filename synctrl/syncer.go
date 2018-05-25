@@ -146,8 +146,13 @@ type syncer struct {
 
 	mode SyncMode       // Synchronisation mode defining the strategy used (per sync cycle)
 	mux  *event.TypeMux // Event multiplexer to announce sync operation events
-	queue   *scheduler   // Scheduler for selecting the hashes to download
+
+	sch   *scheduler   // Scheduler for selecting the hashes to syncer
 	peers   *peerSet // Set of active peers from which download can proceed
+	stateDB hpbdb.Database
+
+	fsPivotLock  *types.Header // Pivot header on critical section entry (cannot change between retries)
+	fsPivotFails uint32        // Number of subsequent fast sync failures in the critical section
 
 	rttEstimate   uint64 // Round trip time to target for download requests
 	rttConfidence uint64 // Confidence in the estimated RTT (unit: millionths to allow atomic ops)
@@ -157,6 +162,9 @@ type syncer struct {
 	syncStatsChainHeight uint64 // Highest block number known when syncing started
 	syncStatsState       stateSyncStats
 	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
+
+	lightchain LightChain
+	blockchain BlockChain
 
 	// Callbacks
 	dropPeer peerDropFn // Drops a peer for misbehaving
@@ -230,6 +238,138 @@ func (this *syncer) stateFetcher() {
 	}
 }
 
+// syncState starts downloading state with the given root hash.
+func (this *syncer) syncState(root common.Hash) *stateSync {
+	s := newStateSync(this, root)
+	select {
+	case this.stateSyncStart <- s:
+	case <-this.quitCh:
+		s.err = errCancelStateFetch
+		close(s.done)
+	}
+	return s
+}
+
+// runStateSync runs a state synchronisation until it completes or another root
+// hash is requested to be switched over to.
+func (this *syncer) runStateSync(s *stateSync) *stateSync {
+	var (
+		active   = make(map[string]*stateReq) // Currently in-flight requests
+		finished []*stateReq                  // Completed or failed requests
+		timeout  = make(chan *stateReq)       // Timed out active requests
+	)
+	defer func() {
+		// Cancel active request timers on exit. Also set peers to idle so they're
+		// available for the next sync.
+		for _, req := range active {
+			req.timer.Stop()
+			req.peer.SetNodeDataIdle(len(req.items))
+		}
+	}()
+	// Run the state sync.
+	go s.run()
+	defer s.Cancel()
+
+	// Listen for peer departure events to cancel assigned tasks
+	peerDrop := make(chan *peerConnection, 1024)
+	peerSub := s.syn.peers.SubscribePeerDrops(peerDrop)
+	defer peerSub.Unsubscribe()
+
+	for {
+		// Enable sending of the first buffered element if there is one.
+		var (
+			deliverReq   *stateReq
+			deliverReqCh chan *stateReq
+		)
+		if len(finished) > 0 {
+			deliverReq = finished[0]
+			deliverReqCh = s.deliver
+		}
+
+		select {
+		// The stateSync lifecycle:
+		case next := <-this.stateSyncStart:
+			return next
+
+		case <-s.done:
+			return nil
+
+			// Send the next finished request to the current sync:
+		case deliverReqCh <- deliverReq:
+			finished = append(finished[:0], finished[1:]...)
+
+			// Handle incoming state packs:
+		case pack := <-this.stateCh:
+			// Discard any data not requested (or previsouly timed out)
+			req := active[pack.PeerId()]
+			if req == nil {
+				log.Debug("Unrequested node data", "peer", pack.PeerId(), "len", pack.Items())
+				continue
+			}
+			// Finalize the request and queue up for processing
+			req.timer.Stop()
+			req.response = pack.(*statePack).states
+
+			finished = append(finished, req)
+			delete(active, pack.PeerId())
+
+			// Handle dropped peer connections:
+		case p := <-peerDrop:
+			// Skip if no request is currently pending
+			req := active[p.id]
+			if req == nil {
+				continue
+			}
+			// Finalize the request and queue up for processing
+			req.timer.Stop()
+			req.dropped = true
+
+			finished = append(finished, req)
+			delete(active, p.id)
+
+			// Handle timed-out requests:
+		case req := <-timeout:
+			// If the peer is already requesting something else, ignore the stale timeout.
+			// This can happen when the timeout and the delivery happens simultaneously,
+			// causing both pathways to trigger.
+			if active[req.peer.id] != req {
+				continue
+			}
+			// Move the timed out data back into the download queue
+			finished = append(finished, req)
+			delete(active, req.peer.id)
+
+			// Track outgoing state requests:
+		case req := <-this.trackStateReq:
+			// If an active request already exists for this peer, we have a problem. In
+			// theory the trie node schedule must never assign two requests to the same
+			// peer. In practive however, a peer might receive a request, disconnect and
+			// immediately reconnect before the previous times out. In this case the first
+			// request is never honored, alas we must not silently overwrite it, as that
+			// causes valid requests to go missing and sync to get stuck.
+			if old := active[req.peer.id]; old != nil {
+				log.Warn("Busy peer assigned new state fetch", "peer", old.peer.id)
+
+				// Make sure the previous one doesn't get siletly lost
+				old.timer.Stop()
+				old.dropped = true
+
+				finished = append(finished, old)
+			}
+			// Start a timer to notify the sync loop if the peer stalled.
+			req.timer = time.AfterFunc(req.timeout, func() {
+				select {
+				case timeout <- req:
+				case <-s.done:
+					// Prevent leaking of timer goroutines in the unlikely case where a
+					// timer is fired just before exiting runStateSync.
+				}
+			})
+			active[req.peer.id] = req
+		}
+	}
+}
+
 func (this *syncer) start(peer *p2p.Peer) {
 	if this.strategy != nil {
 		this.strategy.start(peer)
@@ -261,6 +401,10 @@ func (this *syncer) qosTuner() {
 
 // requestTTL returns the current timeout allowance for a single sync request
 // to finish under.
+func (this *syncer) RequestTTL() time.Duration {
+	return this.requestTTL()
+}
+
 func (this *syncer) requestTTL() time.Duration {
 	var (
 		rtt  = time.Duration(atomic.LoadUint64(&this.rttEstimate))
@@ -284,7 +428,7 @@ func (this *syncer) UnregisterPeer(id string) error {
 		logger.Error("Failed to unregister sync peer", "err", err)
 		return err
 	}
-	this.queue.Revoke(id)
+	this.sch.Revoke(id)
 
 	// If this peer was the master peer, abort sync immediately
 	this.cancelLock.RLock()
