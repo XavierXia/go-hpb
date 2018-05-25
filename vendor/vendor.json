@@ -3,6 +3,12 @@
 	"ignore": "test",
 	"package": [
 		{
+			"checksumSHA1": "9D7/RhxyPegMVxngNgi1DgIVTp4=",
+			"path": "github.com/Workiva/go-datastructures/queue",
+			"revision": "01f52d4880ca171ab1033bb0ee03cda8e0a31cc3",
+			"revisionTime": "2018-04-12T13:39:22Z"
+		},
+		{
 			"checksumSHA1": "USkefO0g1U9mr+8hagv3fpSkrxg=",
 			"origin": "github.com/hpb-project/ghpb/vendor/github.com/aristanetworks/goarista/monotime",
 			"path": "github.com/aristanetworks/goarista/monotime",
@@ -49,11 +55,65 @@
 			"revisionTime": "2018-05-08T10:17:51Z"
 		},
 		{
+			"checksumSHA1": "IlDHv+GrkfH+xp1pdKzOqws1sLY=",
+			"path": "github.com/emirpasic/gods/containers",
+			"revision": "b2394dfbb6314eeb616db55d1e01928f287da4b4",
+			"revisionTime": "2017-12-26T20:51:25Z"
+		},
+		{
+			"checksumSHA1": "ZPTDtUhR0dyogtlRYPsLcRRojEo=",
+			"path": "github.com/emirpasic/gods/lists",
+			"revision": "b2394dfbb6314eeb616db55d1e01928f287da4b4",
+			"revisionTime": "2017-12-26T20:51:25Z"
+		},
+		{
+			"checksumSHA1": "dlrvUiF8wIPQW8iCgo9d6iS5RR4=",
+			"path": "github.com/emirpasic/gods/lists/singlylinkedlist",
+			"revision": "b2394dfbb6314eeb616db55d1e01928f287da4b4",
+			"revisionTime": "2017-12-26T20:51:25Z"
+		},
+		{
+			"checksumSHA1": "f2NQZ/zL+Ty7ybmRcG64E1LQEic=",
+			"path": "github.com/emirpasic/gods/stacks",
+			"revision": "b2394dfbb6314eeb616db55d1e01928f287da4b4",
+			"revisionTime": "2017-12-26T20:51:25Z"
+		},
+		{
+			"checksumSHA1": "lYlzqFRoUi5UEpEpIIweCbNVEgI=",
+			"path": "github.com/emirpasic/gods/stacks/linkedliststack",
+			"revision": "b2394dfbb6314eeb616db55d1e01928f287da4b4",
+			"revisionTime": "2017-12-26T20:51:25Z"
+		},
+		{
+			"checksumSHA1": "6KV7DzMiMWnJbp5qhycmPIQ4t70=",
+			"path": "github.com/emirpasic/gods/utils",
+			"revision": "b2394dfbb6314eeb616db55d1e01928f287da4b4",
+			"revisionTime": "2017-12-26T20:51:25Z"
+		},
+		{
 			"checksumSHA1": "KZ3QD2QgUS4RcoKiA3mn5pSlJxQ=",
 			"origin": "github.com/hpb-project/ghpb/vendor/github.com/go-stack/stack",
 			"path": "github.com/go-stack/stack",
 			"revision": "632b27178399335ba1ef7dff029abc89b4fb616e",
 			"revisionTime": "2018-05-08T10:17:51Z"
+		},
+		{
+			"checksumSHA1": "FhLvgtYfuKY0ow9wtLJRoeg7d6w=",
+			"path": "github.com/gogo/protobuf/gogoproto",
+			"revision": "49944b4a4b085da44c43d4b233ea40787396371f",
+			"revisionTime": "2018-03-20T10:55:59Z"
+		},
+		{
+			"checksumSHA1": "nTHr8B2CPLP8kcJRtBEXluFvzUY=",
+			"path": "github.com/gogo/protobuf/proto",
+			"revision": "49944b4a4b085da44c43d4b233ea40787396371f",
+			"revisionTime": "2018-03-20T10:55:59Z"
+		},
+		{
+			"checksumSHA1": "Vym+ueo+9xbr7CjKbXjxIkUw5cI=",
+			"path": "github.com/gogo/protobuf/protoc-gen-gogo/descriptor",
+			"revision": "49944b4a4b085da44c43d4b233ea40787396371f",
+			"revisionTime": "2018-03-20T10:55:59Z"
 		},
 		{
 			"checksumSHA1": "yqF125xVSkmfLpIVGrLlfE05IUk=",
@@ -369,6 +429,12 @@
 			"path": "github.com/matttproud/golang_protobuf_extensions/pbutil",
 			"revision": "632b27178399335ba1ef7dff029abc89b4fb616e",
 			"revisionTime": "2018-05-08T10:17:51Z"
+		},
+		{
+			"checksumSHA1": "K8QsnZLV9n7jHaNr9jySy1P96LY=",
+			"path": "github.com/orcaman/concurrent-map",
+			"revision": "a05df785d2dcc16310fb997ee1702100d047cfe1",
+			"revisionTime": "2018-03-19T14:43:42Z"
 		},
 		{
 			"checksumSHA1": "Se195FlZ160eaEk/uVx4KdTPSxU=",

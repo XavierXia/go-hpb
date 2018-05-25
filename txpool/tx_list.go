@@ -22,7 +22,6 @@ import (
 	"math/big"
 	"sort"
 
-	"github.com/hpb-project/ghpb/core/types"
 )
 
 // nonceHeap is a heap.Interface implementation over 64bit unsigned integers for
@@ -48,27 +47,27 @@ func (h *nonceHeap) Pop() interface{} {
 // txSortedMap is a nonce->transaction hash map with a heap based index to allow
 // iterating over the contents in a nonce-incrementing way.
 type txSortedMap struct {
-	items map[uint64]*types.Transaction // Hash map storing the transaction data
+	items map[uint64]*Transaction // Hash map storing the transaction data
 	index *nonceHeap                    // Heap of nonces of all the stored transactions (non-strict mode)
-	cache types.Transactions            // Cache of the transactions already sorted
+	cache Transactions            // Cache of the transactions already sorted
 }
 
 // newTxSortedMap creates a new nonce-sorted transaction map.
 func newTxSortedMap() *txSortedMap {
 	return &txSortedMap{
-		items: make(map[uint64]*types.Transaction),
+		items: make(map[uint64]*Transaction),
 		index: new(nonceHeap),
 	}
 }
 
 // Get retrieves the current transactions associated with the given nonce.
-func (m *txSortedMap) Get(nonce uint64) *types.Transaction {
+func (m *txSortedMap) Get(nonce uint64) *Transaction {
 	return m.items[nonce]
 }
 
 // Put inserts a new transaction into the map, also updating the map's nonce
 // index. If a transaction already exists with the same nonce, it's overwritten.
-func (m *txSortedMap) Put(tx *types.Transaction) {
+func (m *txSortedMap) Put(tx *Transaction) {
 	nonce := tx.Nonce()
 	if m.items[nonce] == nil {
 		heap.Push(m.index, nonce)
@@ -79,8 +78,8 @@ func (m *txSortedMap) Put(tx *types.Transaction) {
 // Forward removes all transactions from the map with a nonce lower than the
 // provided threshold. Every removed transaction is returned for any post-removal
 // maintenance.
-func (m *txSortedMap) Forward(threshold uint64) types.Transactions {
-	var removed types.Transactions
+func (m *txSortedMap) Forward(threshold uint64) Transactions {
+	var removed Transactions
 
 	// Pop off heap items until the threshold is reached
 	for m.index.Len() > 0 && (*m.index)[0] < threshold {
@@ -97,8 +96,8 @@ func (m *txSortedMap) Forward(threshold uint64) types.Transactions {
 
 // Filter iterates over the list of transactions and removes all of them for which
 // the specified function evaluates to true.
-func (m *txSortedMap) Filter(filter func(*types.Transaction) bool) types.Transactions {
-	var removed types.Transactions
+func (m *txSortedMap) Filter(filter func(*Transaction) bool) Transactions {
+	var removed Transactions
 
 	// Collect all the transactions to filter out
 	for nonce, tx := range m.items {
@@ -122,13 +121,13 @@ func (m *txSortedMap) Filter(filter func(*types.Transaction) bool) types.Transac
 
 // Cap places a hard limit on the number of items, returning all transactions
 // exceeding that limit.
-func (m *txSortedMap) Cap(threshold int) types.Transactions {
+func (m *txSortedMap) Cap(threshold int) Transactions {
 	// Short circuit if the number of items is under the limit
 	if len(m.items) <= threshold {
 		return nil
 	}
 	// Otherwise gather and drop the highest nonce'd transactions
-	var drops types.Transactions
+	var drops Transactions
 
 	sort.Sort(*m.index)
 	for size := len(m.items); size > threshold; size-- {
@@ -173,13 +172,13 @@ func (m *txSortedMap) Remove(nonce uint64) bool {
 // Note, all transactions with nonces lower than start will also be returned to
 // prevent getting into and invalid state. This is not something that should ever
 // happen but better to be self correcting than failing!
-func (m *txSortedMap) Ready(start uint64) types.Transactions {
+func (m *txSortedMap) Ready(start uint64) Transactions {
 	// Short circuit if no transactions are available
 	if m.index.Len() == 0 || (*m.index)[0] > start {
 		return nil
 	}
 	// Otherwise start accumulating incremental transactions
-	var ready types.Transactions
+	var ready Transactions
 	for next := (*m.index)[0]; m.index.Len() > 0 && (*m.index)[0] == next; next++ {
 		ready = append(ready, m.items[next])
 		delete(m.items, next)
@@ -198,17 +197,17 @@ func (m *txSortedMap) Len() int {
 // Flatten creates a nonce-sorted slice of transactions based on the loosely
 // sorted internal representation. The result of the sorting is cached in case
 // it's requested again before any modifications are made to the contents.
-func (m *txSortedMap) Flatten() types.Transactions {
+func (m *txSortedMap) Flatten() Transactions {
 	// If the sorting was not cached yet, create and cache it
 	if m.cache == nil {
-		m.cache = make(types.Transactions, 0, len(m.items))
+		m.cache = make(Transactions, 0, len(m.items))
 		for _, tx := range m.items {
 			m.cache = append(m.cache, tx)
 		}
-		sort.Sort(types.TxByNonce(m.cache))
+		sort.Sort(TxByNonce(m.cache))
 	}
 	// Copy the cache to prevent accidental modifications
-	txs := make(types.Transactions, len(m.cache))
+	txs := make(Transactions, len(m.cache))
 	copy(txs, m.cache)
 	return txs
 }
@@ -238,7 +237,7 @@ func newTxList(strict bool) *txList {
 
 // Overlaps returns whether the transaction specified has the same nonce as one
 // already contained within the list.
-func (l *txList) Overlaps(tx *types.Transaction) bool {
+func (l *txList) Overlaps(tx *Transaction) bool {
 	return l.txs.Get(tx.Nonce()) != nil
 }
 
@@ -247,7 +246,7 @@ func (l *txList) Overlaps(tx *types.Transaction) bool {
 //
 // If the new transaction is accepted into the list, the lists' cost and gas
 // thresholds are also potentially updated.
-func (l *txList) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transaction) {
+func (l *txList) Add(tx *Transaction, priceBump uint64) (bool, *Transaction) {
 	// If there's an older better transaction, abort
 	old := l.txs.Get(tx.Nonce())
 	if old != nil {
@@ -270,7 +269,7 @@ func (l *txList) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Tran
 // Forward removes all transactions from the list with a nonce lower than the
 // provided threshold. Every removed transaction is returned for any post-removal
 // maintenance.
-func (l *txList) Forward(threshold uint64) types.Transactions {
+func (l *txList) Forward(threshold uint64) Transactions {
 	return l.txs.Forward(threshold)
 }
 
@@ -283,7 +282,7 @@ func (l *txList) Forward(threshold uint64) types.Transactions {
 // a point in calculating all the costs or if the balance covers all. If the threshold
 // is lower than the costgas cap, the caps will be reset to a new high after removing
 // the newly invalidated transactions.
-func (l *txList) Filter(costLimit, gasLimit *big.Int) (types.Transactions, types.Transactions) {
+func (l *txList) Filter(costLimit, gasLimit *big.Int) (Transactions, Transactions) {
 	// If all transactions are below the threshold, short circuit
 	if l.costcap.Cmp(costLimit) <= 0 && l.gascap.Cmp(gasLimit) <= 0 {
 		return nil, nil
@@ -292,10 +291,10 @@ func (l *txList) Filter(costLimit, gasLimit *big.Int) (types.Transactions, types
 	l.gascap = new(big.Int).Set(gasLimit)
 
 	// Filter out all the transactions above the account's funds
-	removed := l.txs.Filter(func(tx *types.Transaction) bool { return tx.Cost().Cmp(costLimit) > 0 || tx.Gas().Cmp(gasLimit) > 0 })
+	removed := l.txs.Filter(func(tx *Transaction) bool { return tx.Cost().Cmp(costLimit) > 0 || tx.Gas().Cmp(gasLimit) > 0 })
 
 	// If the list was strict, filter anything above the lowest nonce
-	var invalids types.Transactions
+	var invalids Transactions
 
 	if l.strict && len(removed) > 0 {
 		lowest := uint64(math.MaxUint64)
@@ -304,21 +303,21 @@ func (l *txList) Filter(costLimit, gasLimit *big.Int) (types.Transactions, types
 				lowest = nonce
 			}
 		}
-		invalids = l.txs.Filter(func(tx *types.Transaction) bool { return tx.Nonce() > lowest })
+		invalids = l.txs.Filter(func(tx *Transaction) bool { return tx.Nonce() > lowest })
 	}
 	return removed, invalids
 }
 
 // Cap places a hard limit on the number of items, returning all transactions
 // exceeding that limit.
-func (l *txList) Cap(threshold int) types.Transactions {
+func (l *txList) Cap(threshold int) Transactions {
 	return l.txs.Cap(threshold)
 }
 
 // Remove deletes a transaction from the maintained list, returning whether the
 // transaction was found, and also returning any transaction invalidated due to
 // the deletion (strict mode only).
-func (l *txList) Remove(tx *types.Transaction) (bool, types.Transactions) {
+func (l *txList) Remove(tx *Transaction) (bool, Transactions) {
 	// Remove the transaction from the set
 	nonce := tx.Nonce()
 	if removed := l.txs.Remove(nonce); !removed {
@@ -326,7 +325,7 @@ func (l *txList) Remove(tx *types.Transaction) (bool, types.Transactions) {
 	}
 	// In strict mode, filter out non-executable transactions
 	if l.strict {
-		return true, l.txs.Filter(func(tx *types.Transaction) bool { return tx.Nonce() > nonce })
+		return true, l.txs.Filter(func(tx *Transaction) bool { return tx.Nonce() > nonce })
 	}
 	return true, nil
 }
@@ -338,7 +337,7 @@ func (l *txList) Remove(tx *types.Transaction) (bool, types.Transactions) {
 // Note, all transactions with nonces lower than start will also be returned to
 // prevent getting into and invalid state. This is not something that should ever
 // happen but better to be self correcting than failing!
-func (l *txList) Ready(start uint64) types.Transactions {
+func (l *txList) Ready(start uint64) Transactions {
 	return l.txs.Ready(start)
 }
 
@@ -355,6 +354,6 @@ func (l *txList) Empty() bool {
 // Flatten creates a nonce-sorted slice of transactions based on the loosely
 // sorted internal representation. The result of the sorting is cached in case
 // it's requested again before any modifications are made to the contents.
-func (l *txList) Flatten() types.Transactions {
+func (l *txList) Flatten() Transactions {
 	return l.txs.Flatten()
 }
