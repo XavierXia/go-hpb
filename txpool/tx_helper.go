@@ -3,13 +3,13 @@ package txpool
 import (
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/hexutil"
-	"github.com/hpb-project/ghpb/core/types"
 	"github.com/hpb-project/go-hpb/account"
 	"math/big"
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/common/log"
 	"github.com/hpb-project/ghpb/common/rlp"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 // SendTxArgs represents the arguments to submit a new transaction into the transaction pool.

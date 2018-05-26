@@ -1,7 +1,7 @@
 package event
 
 import (
-	"github.com/hpb-project/ghpb/core/types"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 type ChainHeadEvent struct {

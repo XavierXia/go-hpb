@@ -17,7 +17,6 @@
 package txpool
 
 import (
-	"github.com/hpb-project/ghpb/core/types"
 	"sync"
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/core/state"
@@ -34,6 +33,7 @@ import (
 	"github.com/hpb-project/go-hpb/event/eventhub"
 	"github.com/hpb-project/go-hpb/event/actor"
 	"github.com/hpb-project/go-hpb/event"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 var (
@@ -143,7 +143,7 @@ type TxPool struct {
 	chainHeadCh    chan event.ChainHeadEvent
 	txPrePublisher *actor.PID
 
-	signer Signer
+	signer types.Signer
 	mu     sync.RWMutex
 
 	config        TxPoolConfig
@@ -155,7 +155,7 @@ type TxPool struct {
 	pending map[common.Address]*txList   // All currently processable transactions
 	queue   map[common.Address]*txList   // Queued but non-processable transactions
 	beats   map[common.Address]time.Time // Last heartbeat from each known account
-	all     map[common.Hash]*Transaction // All transactions to allow lookups
+	all     map[common.Hash]*types.Transaction // All transactions to allow lookups
 }
 
 //Create the transaction pool and start main process loop.
@@ -171,11 +171,11 @@ func NewTxPool(config TxPoolConfig, chainConfig *params.ChainConfig, blockChain 
 		pending:  make(map[common.Address]*txList),
 		queue:    make(map[common.Address]*txList),
 		beats:    make(map[common.Address]time.Time),
-		all:      make(map[common.Hash]*Transaction),
+		all:      make(map[common.Hash]*types.Transaction),
 		gasPrice: new(big.Int).SetUint64(config.PriceLimit),
 		//FIXME
 		chain:       blockChain,
-		signer:      NewEIP155Signer(chainConfig.ChainId),
+		signer:      types.NewEIP155Signer(chainConfig.ChainId),
 		chainHeadCh: make(chan event.ChainHeadEvent, 10),
 		stopCh:      make(chan struct{}),
 	}
@@ -297,16 +297,16 @@ func (pool *TxPool) lockedReset(oldHead, newHead *types.Header) {
 	pool.reset(oldHead, newHead)
 }
 
-func TransactionsWrapper(transactions types.Transactions) Transactions {
-	txs := make(Transactions, 0, len(transactions))
+func TransactionsWrapper(transactions types.Transactions) types.Transactions {
+	txs := make(types.Transactions, 0, len(transactions))
 	for _, tx := range transactions {
 		txs = append(txs, converTransaction(tx))
 	}
 	return txs
 }
 
-func converTransaction(tx *types.Transaction) *Transaction {
-	transaction := Transaction{}
+func converTransaction(tx *types.Transaction) *types.Transaction {
+	transaction := types.Transaction{}
 	jsonByte, _ := tx.MarshalJSON()
 	transaction.UnmarshalJSON(jsonByte)
 	return &transaction
@@ -316,7 +316,7 @@ func converTransaction(tx *types.Transaction) *Transaction {
 // of the transaction pool is valid with regard to the chain state.
 func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	// If we're reorging an old state, reinject all dropped transactions
-	var reinject Transactions
+	var reinject types.Transactions
 
 	if oldHead != nil && oldHead.Hash() != newHead.ParentHash {
 		// If the reorg is too deep, avoid doing it (will happen during fast sync)
@@ -327,7 +327,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 			log.Warn("Skipping deep transaction reorg", "depth", depth)
 		} else {
 			// Reorg seems shallow enough to pull in all transactions into memory
-			var discarded, included Transactions
+			var discarded, included types.Transactions
 
 			var (
 				rem = pool.chain.GetBlock(oldHead.Hash(), oldHead.Number.Uint64())
@@ -367,7 +367,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 					return
 				}
 			}
-			reinject = TxDifference(discarded, included)
+			reinject = types.TxDifference(discarded, included)
 		}
 	}
 	// Initialize the internal state to the current head
@@ -404,14 +404,14 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 }
 
 // addTxs attempts to queue a batch of transactions if they are valid.
-func (pool *TxPool) AddTxs(txs []*Transaction) error {
+func (pool *TxPool) AddTxs(txs []*types.Transaction) error {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 	return pool.addTxsLocked(txs)
 }
 
 // addTxs attempts to queue a batch of transactions if they are valid.
-func (pool *TxPool) AddTx(tx *Transaction) error {
+func (pool *TxPool) AddTx(tx *types.Transaction) error {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 	return pool.addTxLocked(tx)
@@ -419,13 +419,13 @@ func (pool *TxPool) AddTx(tx *Transaction) error {
 
 // addTxsLocked attempts to queue a batch of transactions if they are valid,
 // whilst assuming the transaction pool lock is already held.
-func (pool *TxPool) addTxsLocked(txs []*Transaction) error {
+func (pool *TxPool) addTxsLocked(txs []*types.Transaction) error {
 	// Add the batch of transaction, tracking the accepted ones
 	dirty := make(map[common.Address]struct{})
 	for _, tx := range txs {
 		if replace, err := pool.add(tx); err == nil {
 			if !replace {
-				from, _ := Sender(pool.signer, tx) // already validated
+				from, _ := types.Sender(pool.signer, tx) // already validated
 				dirty[from] = struct{}{}
 			}
 		}
@@ -442,7 +442,7 @@ func (pool *TxPool) addTxsLocked(txs []*Transaction) error {
 }
 
 // addTx enqueues a single transaction into the pool if it is valid.
-func (pool *TxPool) addTxLocked(tx *Transaction) error {
+func (pool *TxPool) addTxLocked(tx *types.Transaction) error {
 	// Try to inject the transaction and update any state
 	replace, err := pool.add(tx)
 	if err != nil {
@@ -450,7 +450,7 @@ func (pool *TxPool) addTxLocked(tx *Transaction) error {
 	}
 	// If we added a new transaction, run promotion checks and return
 	if !replace {
-		from, _ := Sender(pool.signer, tx) // already validated
+		from, _ := types.Sender(pool.signer, tx) // already validated
 		pool.promoteExecutables([]common.Address{from})
 	}
 	return nil
@@ -464,7 +464,7 @@ func (pool *TxPool) addTxLocked(tx *Transaction) error {
 // If a newly added transaction is marked as local, its sending account will be
 // whitelisted, preventing any associated transaction from being dropped out of
 // the pool due to pricing constraints.
-func (pool *TxPool) add(tx *Transaction) (bool, error) {
+func (pool *TxPool) add(tx *types.Transaction) (bool, error) {
 	// If the transaction is already known, discard it
 	hash := tx.Hash()
 	if pool.all[hash] != nil {
@@ -481,7 +481,7 @@ func (pool *TxPool) add(tx *Transaction) (bool, error) {
 		return false, ErrTxPoolFull
 	}
 	// If the transaction is replacing an already pending one, do directly
-	from, _ := Sender(pool.signer, tx) // already validated
+	from, _ := types.Sender(pool.signer, tx) // already validated
 	if list := pool.pending[from]; list != nil && list.Overlaps(tx) {
 		// Nonce already pending, check if required price bump is met
 		inserted, old := list.Add(tx, pool.config.PriceBump)
@@ -511,11 +511,11 @@ func (pool *TxPool) add(tx *Transaction) (bool, error) {
 // Pending retrieves all currently processable transactions, groupped by origin
 // account and sorted by nonce. The returned transaction set is a copy and can be
 // freely modified by calling code.
-func (pool *TxPool) Pending() (map[common.Address]Transactions, error) {
+func (pool *TxPool) Pending() (map[common.Address]types.Transactions, error) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	pending := make(map[common.Address]Transactions)
+	pending := make(map[common.Address]types.Transactions)
 	for addr, list := range pool.pending {
 		pending[addr] = list.Flatten()
 	}
@@ -524,7 +524,7 @@ func (pool *TxPool) Pending() (map[common.Address]Transactions, error) {
 
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
-func (pool *TxPool) validateTx(tx *Transaction) error {
+func (pool *TxPool) validateTx(tx *types.Transaction) error {
 	// Heuristic limit, reject transactions over 32KB to prevent DOS attacks
 	if tx.Size() > 32*1024 {
 		return ErrOversizedData
@@ -539,7 +539,7 @@ func (pool *TxPool) validateTx(tx *Transaction) error {
 		return ErrGasLimit
 	}
 	// Make sure the transaction is signed properly
-	from, err := Sender(pool.signer, tx)
+	from, err := types.Sender(pool.signer, tx)
 	if err != nil {
 		return ErrInvalidSender
 	}
@@ -594,9 +594,9 @@ func IntrinsicGas(data []byte, contractCreation bool) *big.Int {
 // enqueueTx inserts a new transaction into the non-executable transaction queue.
 //
 // Note, this method assumes the pool lock is held!
-func (pool *TxPool) enqueueTx(hash common.Hash, tx *Transaction) (bool, error) {
+func (pool *TxPool) enqueueTx(hash common.Hash, tx *types.Transaction) (bool, error) {
 	// Try to insert the transaction into the future queue
-	from, _ := Sender(pool.signer, tx) // already validated
+	from, _ := types.Sender(pool.signer, tx) // already validated
 	if pool.queue[from] == nil {
 		pool.queue[from] = newTxList(false)
 	}
@@ -824,7 +824,7 @@ func (pool *TxPool) demoteUnexecutables() {
 // promoteTx adds a transaction to the pending (processable) list of transactions.
 //
 // Note, this method assumes the pool lock is held!
-func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *Transaction) {
+func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.Transaction) {
 	// Try to insert the transaction into the pending queue
 	if pool.pending[addr] == nil {
 		pool.pending[addr] = newTxList(true)
@@ -873,7 +873,7 @@ func (pool *TxPool) Stats() (int, int) {
 
 // Get returns a transaction if it is contained in the pool
 // and nil otherwise.
-func (pool *TxPool) Get(hash common.Hash) *Transaction {
+func (pool *TxPool) Get(hash common.Hash) *types.Transaction {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
 
@@ -888,7 +888,7 @@ func (pool *TxPool) removeTx(hash common.Hash) {
 	if !ok {
 		return
 	}
-	addr, _ := Sender(pool.signer, tx) // already validated during insertion
+	addr, _ := types.Sender(pool.signer, tx) // already validated during insertion
 
 	// Remove it from the list of known transactions
 	delete(pool.all, hash)

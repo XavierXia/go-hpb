@@ -32,10 +32,10 @@ import (
 	"time"
 
 	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/core/types"
 	"github.com/hpb-project/ghpb/core/event"
 	"github.com/hpb-project/go-hpb/account"
 	"github.com/hpb-project/ghpb/common/crypto"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 var (

@@ -20,7 +20,7 @@ import (
 	"math/big"
 	
 	"github.com/hpb-project/go-hpb/account"
-	"github.com/hpb-project/ghpb/core/types"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 // keystoreWallet implements the accounts.Wallet interface for the original
