@@ -28,8 +28,9 @@ import (
 	"github.com/hpb-project/go-hpb/txpool"
 	"github.com/hpb-project/ghpb/core"
 	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/core/types"
 	"github.com/hpb-project/go-hpb/hvm/native"
+	"github.com/hpb-project/go-hpb/types"
+	"github.com/hpb-project/go-hpb/hvm/evm"
 )
 
 var (
@@ -37,6 +38,7 @@ var (
 	errInsufficientBalanceForGas = errors.New("insufficient balance to pay for gas")
 	ErrNonceTooHigh              = errors.New("nonce too high")
 	ErrInsufficientBalance       = errors.New("insufficient balance")
+	ErrGasLimitReached           = errors.New("gas limit reached")
 )
 
 /*
@@ -234,7 +236,8 @@ func (st *StateTransition) TransitionOnNative() (ret []byte, requiredGas, usedGa
 
 	var beneficiary common.Address
 	if st.author == nil {
-		beneficiary, _ = st.blockChain.Engine().Author(st.header) // Ignore error, we're past header validation
+		//TODO change header's type
+		//beneficiary, _ = st.blockChain.Engine().Author(st.header) // Ignore error, we're past header validation
 	} else {
 		beneficiary = *st.author
 	}
@@ -251,7 +254,7 @@ func (st *StateTransition) TransitionOnEVM() (ret []byte, requiredGas, usedGas *
 	context := NewEVMContext(st.msg, st.header, st.blockChain, st.author)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
-	evm := vm.NewEVM(context, st.state, params.TestnetChainConfig, vm.Config{})
+	ethereum_vm := evm.NewEVM(context, st.state, params.TestnetChainConfig, evm.Config{})
 
 	msg := st.msg
 	sender := st.from() // err checked in preCheck
@@ -265,11 +268,11 @@ func (st *StateTransition) TransitionOnEVM() (ret []byte, requiredGas, usedGas *
 		vmerr error
 	)
 	if contractCreation {
-		ret, _, st.gas, vmerr = evm.Create(sender, st.data, st.gas, st.value)
+		ret, _, st.gas, vmerr = ethereum_vm.Create(sender, st.data, st.gas, st.value)
 	} else {
 		// Increment the nonce for the next transaction
 		st.state.SetNonce(sender.Address(), st.state.GetNonce(sender.Address())+1)
-		ret, st.gas, vmerr = evm.Call(sender, st.to().Address(), st.data, st.gas, st.value)
+		ret, st.gas, vmerr = ethereum_vm.Call(sender, st.to().Address(), st.data, st.gas, st.value)
 	}
 	if vmerr != nil {
 		log.Debug("VM returned with error", "err", vmerr)
@@ -283,7 +286,7 @@ func (st *StateTransition) TransitionOnEVM() (ret []byte, requiredGas, usedGas *
 	requiredGas = new(big.Int).Set(st.gasUsed())
 
 	st.refundGas()
-	st.state.AddBalance(evm.Coinbase, new(big.Int).Mul(st.gasUsed(), st.gasPrice))
+	st.state.AddBalance(ethereum_vm.Coinbase, new(big.Int).Mul(st.gasUsed(), st.gasPrice))
 
 	return ret, requiredGas, st.gasUsed(), vmerr != nil, err
 }
