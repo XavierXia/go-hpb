@@ -30,8 +30,6 @@ import (
 	"sync/atomic"
 	"gopkg.in/karalabe/cookiejar.v2/collections/prque"
 	"sort"
-	"github.com/hpb-project/go-hpb/event/eventhub"
-	"github.com/hpb-project/go-hpb/event/actor"
 	"github.com/hpb-project/go-hpb/event"
 	"github.com/hpb-project/go-hpb/types"
 )
@@ -139,9 +137,9 @@ type TxPool struct {
 	stopCh chan struct{}
 
 	//TODO remove
-	chain          blockChain
-	chainHeadCh    chan event.ChainHeadEvent
-	txPrePublisher *actor.PID
+	chain        blockChain
+	chainHeadCh  chan event.ChainHeadEvent
+	txPreTrigger event.Trigger
 
 	signer types.Signer
 	mu     sync.RWMutex
@@ -152,9 +150,9 @@ type TxPool struct {
 	currentMaxGas *big.Int            // Current gas limit for transaction caps
 	gasPrice      *big.Int
 
-	pending map[common.Address]*txList   // All currently processable transactions
-	queue   map[common.Address]*txList   // Queued but non-processable transactions
-	beats   map[common.Address]time.Time // Last heartbeat from each known account
+	pending map[common.Address]*txList         // All currently processable transactions
+	queue   map[common.Address]*txList         // Queued but non-processable transactions
+	beats   map[common.Address]time.Time       // Last heartbeat from each known account
 	all     map[common.Hash]*types.Transaction // All transactions to allow lookups
 }
 
@@ -182,22 +180,20 @@ func NewTxPool(config TxPoolConfig, chainConfig *params.ChainConfig, blockChain 
 	pool.reset(nil, blockChain.CurrentBlock().Header())
 
 	//3.Subscribe ChainHeadEvent
-	eventHub := eventhub.GlobalEventHub
-	subscribeFunc := actor.FromFunc(func(context actor.Context) {
-		switch msg := context.Message().(type) {
-		case event.ChainHeadEvent:
-			log.Info("TxPool %s get ChainHeadEvent %s", context.Self().Id, msg.Message.String())
-			pool.chainHeadCh <- msg
-		default:
-			log.Warn("TxPool %s get Unknown msg")
-		}
-	})
-	chainHeadSubPid, _ := actor.SpawnNamed(subscribeFunc, "tx_pool_chain_head_subscriber")
-	eventHub.Subscribe(event.CHAIN_HEAD_TOPIC, chainHeadSubPid)
+	chainHeadReceiver := event.RegisterReceiver("tx_pool_chain_head_subscriber",
+		func(payload interface{}) {
+			switch msg := payload.(type) {
+			case event.ChainHeadEvent:
+				log.Info("TxPool get ChainHeadEvent %s", msg.Message.String())
+				pool.chainHeadCh <- msg
+			default:
+				log.Warn("TxPool get Unknown msg")
+			}
+		})
+	event.Subscribe(chainHeadReceiver, event.ChainHeadTopic)
 
 	//4.Register Publish TxPre publisher
-	publishFunc := actor.FromFunc(func(context actor.Context) {})
-	pool.txPrePublisher, _ = actor.SpawnNamed(publishFunc, "tx_pool_tx_pre_publisher")
+	pool.txPreTrigger = event.RegisterTrigger("tx_pool_tx_pre_publisher")
 
 	//3.start main process loop
 	pool.wg.Add(1)
@@ -473,7 +469,7 @@ func (pool *TxPool) add(tx *types.Transaction) (bool, error) {
 
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
 		// We've directly injected a replacement transaction, notify subsystems
-		eventhub.GlobalEventHub.Publish(&eventhub.Event{Publisher: pool.txPrePublisher, Message: TxPreEvent{tx}, Topic: event.TXPRE_TOPIC, Policy: eventhub.PublishPolicyAll})
+		event.FireEvent(&event.Event{Trigger: pool.txPreTrigger, Payload: event.TxPreEvent{tx}, Topic: event.TxPreTopic})
 		return old != nil, nil
 	}
 	// New transaction isn't replacing a pending one, push into queue
@@ -831,7 +827,7 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.T
 	pool.beats[addr] = time.Now()
 	pool.pendingState.SetNonce(addr, tx.Nonce()+1)
 
-	eventhub.GlobalEventHub.Publish(&eventhub.Event{Publisher: pool.txPrePublisher, Message: TxPreEvent{tx}, Topic: event.TXPRE_TOPIC, Policy: eventhub.PublishPolicyAll})
+	event.FireEvent(&event.Event{Trigger: pool.txPreTrigger, Payload: event.TxPreEvent{tx}, Topic: event.TxPreTopic})
 }
 
 // stats retrieves the current pool stats, namely the number of pending and the

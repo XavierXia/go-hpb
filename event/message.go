@@ -8,3 +8,6 @@ type ChainHeadEvent struct {
 	Message *types.Block
 }
 
+type TxPreEvent struct {
+	Message *types.Transaction
+}
