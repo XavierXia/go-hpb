@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-package hvm
+package core
 
 import (
 	"math/big"
@@ -24,8 +24,8 @@ import (
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/core/state"
 	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/core"
 	"github.com/hpb-project/go-hpb/consensus"
+	"github.com/hpb-project/go-hpb/hvm"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -34,12 +34,12 @@ import (
 // StateProcessor implements Processor.
 type StateProcessor struct {
 	config *params.ChainConfig // Chain configuration options
-	bc     *core.BlockChain         // Canonical block chain
+	bc     *BlockChain         // Canonical block chain
 	engine consensus.Engine    // Consensus engine used for block rewards
 }
 
 // NewStateProcessor initialises a new StateProcessor.
-func NewStateProcessor(config *params.ChainConfig, bc *core.BlockChain, engine consensus.Engine) *StateProcessor {
+func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consensus.Engine) *StateProcessor {
 	return &StateProcessor{
 		config: config,
 		bc:     bc,
@@ -60,7 +60,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (ty
 		totalUsedGas = big.NewInt(0)
 		header       = block.Header()
 		allLogs      []*types.Log
-		gp           = new(GasPool).AddGas(block.GasLimit())
+		gp           = new(hvm.GasPool).AddGas(block.GasLimit())
 	)
 
 	// Iterate over and process the individual transactions
@@ -83,7 +83,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (ty
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-func ApplyTransaction(config *params.ChainConfig, bc *core.BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *big.Int) (*types.Receipt, *big.Int, error) {
+func ApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common.Address, gp *hvm.GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *big.Int) (*types.Receipt, *big.Int, error) {
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, nil, err

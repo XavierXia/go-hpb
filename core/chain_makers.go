@@ -25,9 +25,8 @@ import (
 	"github.com/hpb-project/ghpb/storage"
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/consensus/prometheus"
-	"github.com/hpb-project/go-hpb/core/hvm"
-	"github.com/hpb-project/go-hpb/core/hvm/evm"
+	"github.com/hpb-project/go-hpb/hvm"
+	"github.com/hpb-project/go-hpb/consensus/solo"
 )
 // So we can deterministically seed different blockchains
 var (
@@ -83,7 +82,7 @@ func (b *BlockGen) AddTx(tx *types.Transaction) {
 		b.SetCoinbase(common.Address{})
 	}
 	b.statedb.Prepare(tx.Hash(), common.Hash{}, len(b.txs))
-	receipt, _, err := hvm.ApplyTransaction(b.config, nil, &b.header.Coinbase, b.gasPool, b.statedb, b.header, tx, b.header.GasUsed)
+	receipt, _, err := ApplyTransaction(b.config, nil, &b.header.Coinbase, b.gasPool, b.statedb, b.header, tx, b.header.GasUsed)
 	if err != nil {
 		panic(err)
 	}
@@ -217,7 +216,7 @@ func newCanonical(n int, full bool) (hpbdb.Database, *BlockChain, error) {
 	db, _ := hpbdb.NewMemDatabase()
 	genesis := gspec.MustCommit(db)
 
-	blockchain, _ := NewBlockChain(db, params.TestnetChainConfig, prometheus.New(params.TestnetChainConfig.Prometheus, db) , evm.Config{})
+	blockchain, _ := NewBlockChain(db, params.TestnetChainConfig, solo.New())
 	// Create and inject the requested chain
 	if n == 0 {
 		return db, blockchain, nil

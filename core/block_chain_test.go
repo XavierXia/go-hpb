@@ -7,9 +7,8 @@ import (
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/go-hpb/hvm/evm"
-	"github.com/hpb-project/go-hpb/consensus/prometheus"
 	"github.com/hpb-project/go-hpb/types"
+	"github.com/hpb-project/go-hpb/consensus/solo"
 )
 
 func TestApplyTx(t *testing.T) {
@@ -28,7 +27,7 @@ func TestApplyTx(t *testing.T) {
 		genesis = gspec.MustCommit(db)
 	)
 
-	blockchain, _ := NewBlockChain(db, gspec.Config, prometheus.New(params.TestnetChainConfig.Prometheus, db), evm.Config{})
+	blockchain, _ := NewBlockChain(db, gspec.Config,solo.New())
 	defer blockchain.Stop()
 
 	blocks, _ := GenerateChain(gspec.Config, genesis, db, 4, func(i int, block *BlockGen) {
@@ -36,7 +35,9 @@ func TestApplyTx(t *testing.T) {
 			tx      *types.Transaction
 			err     error
 			basicTx = func(signer types.Signer) (*types.Transaction, error) {
-				return types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil), signer, key)
+				tx,_:= types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil), signer, key)
+				tx.SetFrom(address)
+				return tx,nil
 			}
 		)
 		tx, err = basicTx(types.NewEIP155Signer(gspec.Config.ChainId))

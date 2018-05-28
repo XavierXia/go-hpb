@@ -1,30 +1,28 @@
-// Copyright 2018 The go-hpb Authors
-// This file is part of the go-hpb.
-//
-// The go-hpb is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// The go-hpb is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Lesser General Public License for more details.
-//
-// You should have received a copy of the GNU Lesser General Public License
-// along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
-
 package hvm
 
 import (
 	"math/big"
-
 	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/consensus"
+	"github.com/hpb-project/go-hpb/hvm/evm"
+	"github.com/hpb-project/go-hpb/consensus"
 	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/core"
-	"github.com/hpb-project/go-hpb/core/hvm/evm"
 )
+
+// Message represents a message sent to a contract.
+type Message interface {
+	From() common.Address
+	//FromFrontier() (common.Address, error)
+	To() *common.Address
+
+	GasPrice() *big.Int
+	Gas() *big.Int
+	Value() *big.Int
+
+	Nonce() uint64
+	CheckNonce() bool
+	Data() []byte
+}
+
 
 // ChainContext supports retrieving headers and consensus parameters from the
 // current blockchain to be used during transaction processing.
@@ -37,7 +35,7 @@ type ChainContext interface {
 }
 
 // NewEVMContext creates a new context for use in the EVM.
-func NewEVMContext(msg Message, header *types.Header, chain *core.BlockChain , author *common.Address) evm.Context {
+func NewEVMContext(msg Message, header *types.Header, chain ChainContext , author *common.Address) evm.Context {
 	// If we don't have an explicit author (i.e. not mining), extract from the header
 	var beneficiary common.Address
 	if author == nil {
@@ -60,7 +58,7 @@ func NewEVMContext(msg Message, header *types.Header, chain *core.BlockChain , a
 }
 
 // GetHashFn returns a GetHashFunc which retrieves header hashes by number
-func GetHashFn(ref *types.Header, chain *core.BlockChain) func(n uint64) common.Hash {
+func GetHashFn(ref *types.Header, chain ChainContext) func(n uint64) common.Hash {
 	return func(n uint64) common.Hash {
 		for header := chain.GetHeader(ref.ParentHash, ref.Number.Uint64()-1); header != nil; header = chain.GetHeader(header.ParentHash, header.Number.Uint64()-1) {
 			if header.Number.Uint64() == n {

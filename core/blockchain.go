@@ -41,8 +41,6 @@ import (
 	"github.com/hashicorp/golang-lru"
 	"github.com/hpb-project/go-hpb/types"
 	"github.com/hpb-project/go-hpb/consensus"
-	"github.com/hpb-project/go-hpb/core/hvm/evm"
-	"github.com/hpb-project/go-hpb/core/hvm"
 )
 
 var (
@@ -112,7 +110,7 @@ type BlockChain struct {
 	engine    consensus.Engine
 	processor Processor // block processor interface
 	validator Validator // block and state validator interface
-	vmConfig  evm.Config
+	//vmConfig  evm.Config
 
 	badBlocks *lru.Cache // Bad block cache
 }
@@ -120,7 +118,7 @@ type BlockChain struct {
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Hpb Validator and
 // Processor.
-func NewBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine consensus.Engine, vmConfig evm.Config) (*BlockChain, error) {
+func NewBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine consensus.Engine) (*BlockChain, error) {
 	bodyCache, _ := lru.New(bodyCacheLimit)
 	bodyRLPCache, _ := lru.New(bodyCacheLimit)
 	blockCache, _ := lru.New(blockCacheLimit)
@@ -137,11 +135,11 @@ func NewBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine co
 		blockCache:   blockCache,
 		futureBlocks: futureBlocks,
 		engine:       engine,
-		vmConfig:     vmConfig,
+		//vmConfig:     vmConfig,
 		badBlocks:    badBlocks,
 	}
 	bc.SetValidator(NewBlockValidator(config, bc, engine))
-	bc.SetProcessor(hvm.NewStateProcessor(config, bc, engine))
+	bc.SetProcessor(NewStateProcessor(config, bc, engine))
 
 	var err error
 	bc.hc, err = NewHeaderChain(chainDb, config, engine, bc.getProcInterrupt)

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-package hvm
+package core
 
 import (
 	"errors"
@@ -27,17 +27,15 @@ import (
 	"github.com/hpb-project/go-hpb/txpool"
 	"github.com/hpb-project/ghpb/core/state"
 	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/core"
-	"github.com/hpb-project/go-hpb/core/hvm/native"
-	"github.com/hpb-project/go-hpb/core/hvm/evm"
+	"github.com/hpb-project/go-hpb/hvm/native"
+	"github.com/hpb-project/go-hpb/hvm/evm"
+	"github.com/hpb-project/go-hpb/hvm"
 )
 
 var (
 	Big0                         = big.NewInt(0)
 	errInsufficientBalanceForGas = errors.New("insufficient balance to pay for gas")
-	ErrNonceTooHigh              = errors.New("nonce too high")
 	ErrInsufficientBalance       = errors.New("insufficient balance")
-	ErrGasLimitReached           = errors.New("gas limit reached")
 )
 
 /*
@@ -58,8 +56,8 @@ The state transitioning model does all all the necessary work to work out a vali
 6) Derive new state root
 */
 type StateTransition struct {
-	gp         *GasPool
-	msg        Message
+	gp         *hvm.GasPool
+	msg        hvm.Message
 	gas        uint64
 	gasPrice   *big.Int
 	initialGas *big.Int
@@ -70,27 +68,12 @@ type StateTransition struct {
 	header     *types.Header
 	author     *common.Address
 	//TODO remove
-	blockChain *core.BlockChain
-}
-
-// Message represents a message sent to a contract.
-type Message interface {
-	From() common.Address
-	//FromFrontier() (common.Address, error)
-	To() *common.Address
-
-	GasPrice() *big.Int
-	Gas() *big.Int
-	Value() *big.Int
-
-	Nonce() uint64
-	CheckNonce() bool
-	Data() []byte
+	blockChain *BlockChain
 }
 
 // NewStateTransition initialises and returns a new state transition object.
-func NewStateTransition(msg Message, gp *GasPool, db *state.StateDB, header *types.Header, author *common.Address, blockChain *core.BlockChain) *StateTransition {
-	native := msg.To() != nil && db.GetCodeSize(msg.From()) == 0
+func NewStateTransition(msg hvm.Message, gp *hvm.GasPool, db *state.StateDB, header *types.Header, author *common.Address, blockChain *BlockChain) *StateTransition {
+	nativeCall := msg.To() != nil && db.GetCodeSize(msg.From()) == 0
 	return &StateTransition{
 		gp:         gp,
 		msg:        msg,
@@ -99,7 +82,7 @@ func NewStateTransition(msg Message, gp *GasPool, db *state.StateDB, header *typ
 		value:      msg.Value(),
 		data:       msg.Data(),
 		state:      db,
-		native:     native,
+		native:     nativeCall,
 		header:     header,
 		author:     author,
 		blockChain: blockChain,
@@ -113,7 +96,7 @@ func NewStateTransition(msg Message, gp *GasPool, db *state.StateDB, header *typ
 // the gas used (which includes gas refunds) and an error if it failed. An error always
 // indicates a core error meaning that the message would always fail for that particular
 // state and would never be accepted within a block.
-func ApplyMessage(bc *core.BlockChain, header *types.Header, db *state.StateDB, author *common.Address, msg Message, gp *GasPool) ([]byte, *big.Int, bool, error) {
+func ApplyMessage(bc *BlockChain, header *types.Header, db *state.StateDB, author *common.Address, msg hvm.Message, gp *hvm.GasPool) ([]byte, *big.Int, bool, error) {
 
 	st := NewStateTransition(msg, gp, db, header, author, bc)
 
@@ -249,7 +232,7 @@ func (st *StateTransition) TransitionOnNative() (ret []byte, requiredGas, usedGa
 // failed. An error indicates a consensus issue.
 func (st *StateTransition) TransitionOnEVM() (ret []byte, requiredGas, usedGas *big.Int, failed bool, err error) {
 	// Create a new context to be used in the EVM environment
-	context := NewEVMContext(st.msg, st.header, st.blockChain, st.author)
+	context := hvm.NewEVMContext(st.msg, st.header, st.blockChain, st.author)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	ethereum_vm := evm.NewEVM(context, st.state, params.TestnetChainConfig, evm.Config{})
