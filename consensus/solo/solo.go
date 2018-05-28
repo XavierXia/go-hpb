@@ -9,9 +9,9 @@ import (
 	"github.com/hpb-project/ghpb/core/state"
 
 	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/ghpb/network/rpc"
 	"github.com/hpb-project/go-hpb/types"
 	"github.com/hpb-project/go-hpb/consensus"
+	"github.com/hpb-project/ghpb/network/rpc"
 )
 
 // Solo protocol constants.
@@ -20,12 +20,8 @@ var (
 )
 
 func (c *Solo) Prepare(chain consensus.ChainReader, header *types.Header) error {
-
-	header.CoinbaseHash = common.AddressHash{}
 	header.Nonce = types.BlockNonce{}
-
 	number := header.Number.Uint64()
-
 	log.Info("Prepare the parameters for mining")
 	header.Difficulty = big.NewInt(3)
 	// Ensure the timestamp has the correct delay
@@ -82,14 +78,6 @@ func (c *Solo) verifyHeader(chain consensus.ChainReader, header *types.Header, p
 	return nil
 }
 
-// verifyCascadingFields verifies all the header fields that are not standalone,
-// rather depend on a batch of previous headers. The caller may optionally pass
-// in a batch of parents (ascending order) to avoid looking those up from the
-// database. This is useful for concurrently verifying a batch of new headers.
-func (c *Solo) verifyCascadingFields(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
-	return c.verifySeal(chain, header, parents)
-}
-
 // VerifyUncles implements consensus.Engine, always returning an error for any
 // uncles as this consensus mechanism doesn't permit uncles.
 func (c *Solo) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
@@ -99,11 +87,6 @@ func (c *Solo) VerifyUncles(chain consensus.ChainReader, block *types.Block) err
 // VerifySeal implements consensus.Engine, checking whether the signature contained
 // in the header satisfies the consensus protocol requirements.
 func (c *Solo) VerifySeal(chain consensus.ChainReader, header *types.Header) error {
-	return c.verifySeal(chain, header, nil)
-}
-
-// 验证封装的正确性，判断是否满足共识算法的需求
-func (c *Solo) verifySeal(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
 	return nil
 }
 
@@ -118,25 +101,19 @@ func (c *Solo) Finalize(chain consensus.ChainReader, header *types.Header, state
 	return types.NewBlock(header, txs, nil, receipts), nil
 }
 
-// Seal implements consensus.Engine, attempting to create a sealed block using
-// the local signing credentials.
+// Seal implements consensus.Engine, attempting to create a sealed block.
 func (c *Solo) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan struct{}) (*types.Block, error) {
 	header := block.Header()
 	header.Nonce, header.MixDigest = types.BlockNonce{}, common.Hash{}
-	log.Info("HPB Solo Seal is starting ")
-
 	// Sealing the genesis block is not supported
 	number := header.Number.Uint64()
 	if number == 0 {
 		return nil, errors.New("no genesis")
 	}
-	// Don't hold the signerHash fields for the entire sealing procedure
 	return block.WithSeal(header), nil
 }
 
-// APIs implements consensus.Engine, returning the user facing RPC API to allow
-// controlling the signerHash voting.
-func (c *Solo) APIs(chain consensus.ChainReader) []rpc.API {
-	return []rpc.API{{
-	}}
+func (c *Solo) APIs(chain consensus.ChainReader) ([]rpc.API)  {
+	return []rpc.API{
+	}
 }
