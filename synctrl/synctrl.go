@@ -96,6 +96,10 @@ func (mode *SyncMode) UnmarshalText(text []byte) error {
 	return nil
 }
 
+type DoneEvent struct{}
+type StartEvent struct{}
+type FailedEvent struct{ Err error }
+
 type SynCtrl struct {
 	fastSync  uint32 // Flag whether fast sync is enabled (gets disabled if we already have blocks)
 	acceptTxs uint32 // Flag whether we're considered synchronised (enables transaction processing)
