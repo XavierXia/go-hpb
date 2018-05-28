@@ -297,21 +297,6 @@ func (pool *TxPool) lockedReset(oldHead, newHead *types.Header) {
 	pool.reset(oldHead, newHead)
 }
 
-func TransactionsWrapper(transactions types.Transactions) types.Transactions {
-	txs := make(types.Transactions, 0, len(transactions))
-	for _, tx := range transactions {
-		txs = append(txs, converTransaction(tx))
-	}
-	return txs
-}
-
-func converTransaction(tx *types.Transaction) *types.Transaction {
-	transaction := types.Transaction{}
-	jsonByte, _ := tx.MarshalJSON()
-	transaction.UnmarshalJSON(jsonByte)
-	return &transaction
-}
-
 // reset retrieves the current state of the blockchain and ensures the content
 // of the transaction pool is valid with regard to the chain state.
 func (pool *TxPool) reset(oldHead, newHead *types.Header) {
@@ -334,34 +319,26 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 				add = pool.chain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
 			)
 			for rem.NumberU64() > add.NumberU64() {
-				//FIXME  change to txpool.Transaction
-				txs := TransactionsWrapper(rem.Transactions())
-				discarded = append(discarded, txs...)
+				discarded = append(discarded, rem.Transactions()...)
 				if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
 					log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
 					return
 				}
 			}
 			for add.NumberU64() > rem.NumberU64() {
-				//FIXME  change to txpool.Transaction
-				txs := TransactionsWrapper(rem.Transactions())
-				included = append(included, txs...)
+				included = append(included, add.Transactions()...)
 				if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
 					log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
 					return
 				}
 			}
 			for rem.Hash() != add.Hash() {
-				//FIXME  change to txpool.Transaction
-				txs := TransactionsWrapper(rem.Transactions())
-				discarded = append(discarded, txs...)
+				discarded = append(discarded, rem.Transactions()...)
 				if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
 					log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
 					return
 				}
-				//FIXME  change to txpool.Transaction
-				txs = TransactionsWrapper(rem.Transactions())
-				included = append(included, txs...)
+				included = append(included, add.Transactions()...)
 				if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
 					log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
 					return

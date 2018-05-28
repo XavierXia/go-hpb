@@ -22,11 +22,10 @@ import (
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/ghpb/common/crypto"
-	"github.com/hpb-project/ghpb/consensus"
 	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/core"
-	"github.com/hpb-project/go-hpb/txpool"
 	"github.com/hpb-project/go-hpb/types"
+	"github.com/hpb-project/go-hpb/core"
+	"github.com/hpb-project/go-hpb/consensus"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -65,9 +64,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (ty
 	)
 
 	// Iterate over and process the individual transactions
-	//FIXME
-	txs := txpool.TransactionsWrapper(block.Transactions())
-	for i, tx := range txs {
+	for i, tx := range block.Transactions() {
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
 		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, totalUsedGas)
 		if err != nil {
@@ -77,8 +74,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (ty
 		allLogs = append(allLogs, receipt.Logs...)
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	//TODO change transaction's type
-	//p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), receipts)
+	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), receipts)
 
 	return receipts, allLogs, totalUsedGas, nil
 }
@@ -116,6 +112,7 @@ func ApplyTransaction(config *params.ChainConfig, bc *core.BlockChain, author *c
 	}
 
 	// Set the receipt logs and create a bloom for filtering
+
 	//TODO change statdb return types
 	//receipt.Logs = statedb.GetLogs(tx.Hash())
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})

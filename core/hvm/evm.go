@@ -22,8 +22,8 @@ import (
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/consensus"
 	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/hvm/evm"
-	"github.com/hpb-project/ghpb/core"
+	"github.com/hpb-project/go-hpb/core"
+	"github.com/hpb-project/go-hpb/core/hvm/evm"
 )
 
 // ChainContext supports retrieving headers and consensus parameters from the
@@ -41,8 +41,7 @@ func NewEVMContext(msg Message, header *types.Header, chain *core.BlockChain , a
 	// If we don't have an explicit author (i.e. not mining), extract from the header
 	var beneficiary common.Address
 	if author == nil {
-		//TODO change header's type
-		//beneficiary, _ = chain.Engine().Author(header) // Ignore error, we're past header validation
+		beneficiary, _ = chain.Engine().Author(header) // Ignore error, we're past header validation
 	} else {
 		beneficiary = *author
 	}

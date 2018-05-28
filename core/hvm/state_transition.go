@@ -22,15 +22,14 @@ import (
 
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/math"
-	"github.com/hpb-project/ghpb/core/vm"
 	"github.com/hpb-project/ghpb/common/log"
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/go-hpb/txpool"
-	"github.com/hpb-project/ghpb/core"
 	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/go-hpb/hvm/native"
 	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/hvm/evm"
+	"github.com/hpb-project/go-hpb/core"
+	"github.com/hpb-project/go-hpb/core/hvm/native"
+	"github.com/hpb-project/go-hpb/core/hvm/evm"
 )
 
 var (
@@ -66,7 +65,7 @@ type StateTransition struct {
 	initialGas *big.Int
 	value      *big.Int
 	data       []byte
-	state      vm.StateDB
+	state      *state.StateDB
 	native     bool
 	header     *types.Header
 	author     *common.Address
@@ -126,7 +125,7 @@ func ApplyMessage(bc *core.BlockChain, header *types.Header, db *state.StateDB, 
 	// Pay intrinsic gas
 	intrinsicGas := txpool.IntrinsicGas(st.data, contractCreation)
 	if intrinsicGas.BitLen() > 64 {
-		return nil, nil, false, vm.ErrOutOfGas
+		return nil, nil, false, evm.ErrOutOfGas
 	}
 	if err := st.useGas(intrinsicGas.Uint64()); err != nil {
 		return nil, nil, false, err
@@ -142,24 +141,24 @@ func ApplyMessage(bc *core.BlockChain, header *types.Header, db *state.StateDB, 
 	}
 }
 
-func (st *StateTransition) from() vm.AccountRef {
+func (st *StateTransition) from() evm.AccountRef {
 	f := st.msg.From()
 	if !st.state.Exist(f) {
 		st.state.CreateAccount(f)
 	}
-	return vm.AccountRef(f)
+	return evm.AccountRef(f)
 }
 
-func (st *StateTransition) to() vm.AccountRef {
+func (st *StateTransition) to() evm.AccountRef {
 	if st.msg == nil {
-		return vm.AccountRef{}
+		return evm.AccountRef{}
 	}
 	to := st.msg.To()
 	if to == nil {
-		return vm.AccountRef{} // contract creation
+		return evm.AccountRef{} // contract creation
 	}
 
-	reference := vm.AccountRef(*to)
+	reference := evm.AccountRef(*to)
 	if !st.state.Exist(*to) {
 		st.state.CreateAccount(*to)
 	}
@@ -168,7 +167,7 @@ func (st *StateTransition) to() vm.AccountRef {
 
 func (st *StateTransition) useGas(amount uint64) error {
 	if st.gas < amount {
-		return vm.ErrOutOfGas
+		return evm.ErrOutOfGas
 	}
 	st.gas -= amount
 
@@ -178,7 +177,7 @@ func (st *StateTransition) useGas(amount uint64) error {
 func (st *StateTransition) buyGas() error {
 	mgas := st.msg.Gas()
 	if mgas.BitLen() > 64 {
-		return vm.ErrOutOfGas
+		return evm.ErrOutOfGas
 	}
 
 	mgval := new(big.Int).Mul(mgas, st.gasPrice)
@@ -236,8 +235,7 @@ func (st *StateTransition) TransitionOnNative() (ret []byte, requiredGas, usedGa
 
 	var beneficiary common.Address
 	if st.author == nil {
-		//TODO change header's type
-		//beneficiary, _ = st.blockChain.Engine().Author(st.header) // Ignore error, we're past header validation
+		beneficiary, _ = st.blockChain.Engine().Author(st.header) // Ignore error, we're past header validation
 	} else {
 		beneficiary = *st.author
 	}
@@ -279,7 +277,7 @@ func (st *StateTransition) TransitionOnEVM() (ret []byte, requiredGas, usedGas *
 		// The only possible consensus-error would be if there wasn't
 		// sufficient balance to make the transfer happen. The first
 		// balance transfer may never fail.
-		if vmerr == vm.ErrInsufficientBalance {
+		if vmerr == evm.ErrInsufficientBalance {
 			return nil, nil, nil, false, vmerr
 		}
 	}
