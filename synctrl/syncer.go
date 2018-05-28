@@ -137,7 +137,8 @@ type BlockChain interface {
 
 type syncStrategy interface {
 	deliverHeaders(id string, headers []*types.Header) (err error)
-	deliverBodies(id string, transactions [][]*types.Transaction, uncles [][]*types.Header) (err error)
+	deliverBodies(id string, transactions [][]*types.Transaction,
+		uncles [][]*types.Header) (err error)
 	deliverReceipts(id string, receipts [][]*types.Receipt) (err error)
 	deliverNodeData(id string, data [][]byte) (err error)
 
@@ -152,8 +153,9 @@ type syncStrategy interface {
 	unregisterPeer(id string) error
 }
 type Syncer struct {
-	mode       SyncMode       // Synchronisation mode defining the strategy used (per sync cycle)
-	strategy   syncStrategy
+	mode         SyncMode       // Synchronisation mode defining the strategy used (per sync cycle)
+	strategy     syncStrategy
+	fsPivotFails uint32
 }
 
 func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightchain LightChain,
@@ -166,11 +168,11 @@ func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightc
 	}
 	switch mode {
 	case FullSync:
-		syn.strategy = newFullsync(stateDb, mux, lightchain, dropPeer)
+		syn.strategy = newFullsync(syn, stateDb, mux, lightchain, dropPeer)
 	case FastSync:
-		syn.strategy = newFastsync(stateDb, mux, lightchain, dropPeer)
+		syn.strategy = newFastsync(syn, stateDb, mux, lightchain, dropPeer)
 	case LightSync:
-		//syn.strategy = newLightsync(syn)
+		syn.strategy = newLightsync(syn, stateDb, mux, lightchain, dropPeer)
 	default:
 		syn.strategy = nil
 	}

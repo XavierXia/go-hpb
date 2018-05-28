@@ -212,9 +212,9 @@ func (this *fastSync) progress() hpbinter.SyncProgress {
 	current := uint64(0)
 	switch this.mode {
 	case FullSync:
-		current = this.blockchain.CurrentBlock().NumberU64()
+		current = core.InstanceBlockChain().CurrentBlock().NumberU64()
 	case FastSync:
-		current = this.blockchain.CurrentFastBlock().NumberU64()
+		current = core.InstanceBlockChain().CurrentFastBlock().NumberU64()
 	case LightSync:
 		current = this.lightchain.CurrentHeader().Number.Uint64()
 	}

@@ -19,7 +19,6 @@ package synctrl
 import (
 	"crypto/rand"
 	"fmt"
-	"math"
 	"github.com/hpb-project/go-hpb/blockchain"
 	"github.com/hpb-project/go-hpb/blockchain/event"
 	"github.com/hpb-project/go-hpb/blockchain/types"
@@ -29,6 +28,7 @@ import (
 	hpbinter "github.com/hpb-project/go-hpb/interface"
 	"github.com/hpb-project/go-hpb/storage"
 	"github.com/rcrowley/go-metrics"
+	"math"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -209,15 +209,7 @@ func (this *fullSync) progress() hpbinter.SyncProgress {
 	this.syncStatsLock.RLock()
 	defer this.syncStatsLock.RUnlock()
 
-	current := uint64(0)
-	switch this.mode {
-	case FullSync:
-		current = this.blockchain.CurrentBlock().NumberU64()
-	case FastSync:
-		current = this.blockchain.CurrentFastBlock().NumberU64()
-	case LightSync:
-		current = this.lightchain.CurrentHeader().Number.Uint64()
-	}
+	current := core.InstanceBlockChain().CurrentBlock().NumberU64()
 	return hpbinter.SyncProgress{
 		StartingBlock: this.syncStatsChainOrigin,
 		CurrentBlock:  current,
@@ -276,7 +268,7 @@ func (this *fullSync) unregisterPeer(id string) error {
 	return nil
 }
 
-// synchronise will select the peer and use it for synchronising. If an empty string is given
+// syn will select the peer and use it for synchronising. If an empty string is given
 // it will use the best peer possible and synchronize if it's TD is higher than our own. If any of the
 // checks fail an error will be returned. This method is synchronous
 func (this *fullSync) syn(id string, hash common.Hash, td *big.Int, mode SyncMode) error {
