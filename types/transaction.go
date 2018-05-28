@@ -273,6 +273,8 @@ func (tx *Transaction) GasPrice() *big.Int { return new(big.Int).Set(tx.data.Pri
 func (tx *Transaction) Value() *big.Int    { return new(big.Int).Set(tx.data.Amount) }
 func (tx *Transaction) Nonce() uint64      { return tx.data.AccountNonce }
 func (tx *Transaction) CheckNonce() bool   { return true }
+//TODO for test use
+func (tx *Transaction) SetFrom(from common.Address)   { tx.from.Store(from) }
 
 // To returns the recipient address of the transaction.
 // It returns nil if the transaction is a contract creation.

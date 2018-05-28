@@ -81,7 +81,6 @@ func setupTxPool() (*TxPool, *ecdsa.PrivateKey) {
 
 	key, _ := crypto.GenerateKey()
 	pool := NewTxPool(testTxPoolConfig, params.TestnetChainConfig, blockchain)
-
 	return pool, key
 }
 
@@ -257,7 +256,7 @@ func TestInvalidTransactions(t *testing.T) {
 	if err := pool.AddTx(tx); err != ErrUnderpriced {
 		t.Error("expected", ErrUnderpriced, "got", err)
 	}
-	tx = pricedTransaction(1, big.NewInt(100000),big.NewInt(1000), key)
+	tx = pricedTransaction(1, big.NewInt(100000), big.NewInt(1000), key)
 	if err := pool.AddTx(tx); err != nil {
 		t.Error("expected", nil, "got", err)
 	}
@@ -1077,14 +1076,15 @@ func BenchmarkPoolInsert(b *testing.B) {
 	// Generate a batch of transactions to enqueue into the pool
 	pool, key := setupTxPool()
 	defer pool.Stop()
-
-	account, _ := deriveSender(transaction(0, big.NewInt(0), key))
-	pool.currentState.AddBalance(account, big.NewInt(1000000))
-
+	address  := crypto.PubkeyToAddress(key.PublicKey)
 	txs := make(types.Transactions, b.N)
 	for i := 0; i < b.N; i++ {
-		txs[i] = transaction(uint64(i), big.NewInt(100000), key)
+		tx := transaction(uint64(i), big.NewInt(100000), key)
+		txs[i] = tx
+		//Skip recoverPublicKey 10411 ns/op
+		tx.SetFrom(address)
 	}
+	pool.currentState.AddBalance(address, big.NewInt(1000000))
 	// Benchmark importing the transactions into the queue
 	b.ResetTimer()
 	for _, tx := range txs {
@@ -1093,8 +1093,9 @@ func BenchmarkPoolInsert(b *testing.B) {
 }
 
 // Benchmarks the speed of batched transaction insertion.
-func BenchmarkPoolBatchInsert100(b *testing.B)   { benchmarkPoolBatchInsert(b, 100) }
-func BenchmarkPoolBatchInsert1000(b *testing.B)  { benchmarkPoolBatchInsert(b, 1000) }
+func BenchmarkPoolBatchInsert100(b *testing.B)  { benchmarkPoolBatchInsert(b, 100) }
+func BenchmarkPoolBatchInsert1000(b *testing.B) { benchmarkPoolBatchInsert(b, 1000) }
+
 // go test -v  -test.bench ^BenchmarkPoolBatchInsert10000$ -test.run ^$  -cpuprofile profile.out
 func BenchmarkPoolBatchInsert10000(b *testing.B) { benchmarkPoolBatchInsert(b, 10000) }
 
