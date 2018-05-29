@@ -9,8 +9,10 @@ import (
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/go-hpb/types"
 	"github.com/hpb-project/go-hpb/consensus/solo"
+	"time"
 )
 
+//go test -v -test.run TestApplyTx -cpuprofile ApplyTx_30000TPS.out
 func TestApplyTx(t *testing.T) {
 
 	// Configure and generate a sample block chain
@@ -27,31 +29,34 @@ func TestApplyTx(t *testing.T) {
 		genesis = gspec.MustCommit(db)
 	)
 
-	blockchain, _ := NewBlockChain(db, gspec.Config,solo.New())
+	blockchain, _ := NewBlockChain(db, gspec.Config, solo.New())
 	defer blockchain.Stop()
-
-	blocks, _ := GenerateChain(gspec.Config, genesis, db, 4, func(i int, block *BlockGen) {
+	var blockCount = 1
+	blocks, _ := GenerateChain(gspec.Config, genesis, db, blockCount, func(i int, block *BlockGen) {
 		var (
 			tx      *types.Transaction
 			err     error
 			basicTx = func(signer types.Signer) (*types.Transaction, error) {
-				tx,_:= types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil), signer, key)
+				tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil), signer, key)
 				tx.SetFrom(address)
-				return tx,nil
+				return tx, nil
 			}
 		)
-		tx, err = basicTx(types.NewEIP155Signer(gspec.Config.ChainId))
-		if err != nil {
-			t.Fatal(err)
+		//var txSlice = make([]*types.Transaction,0,10000)
+		for i = 0; i < 30000; i++ {
+			tx, err = basicTx(types.NewEIP155Signer(gspec.Config.ChainId))
+			if err != nil {
+				t.Fatal(err)
+			}
+			//txSlice = append(txSlice,tx)
+			block.AddTx(tx)
 		}
-		block.AddTx(tx)
 	})
-
+	var start = time.Now()
 	if _, err := blockchain.InsertChain(blocks); err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("insert %d blocks cost %s \n", blockCount, common.PrettyDuration(time.Since(start)).String())
 	block := blockchain.GetBlockByNumber(1)
-	for _,tx := range block.Transactions() {
-		t.Log(tx.String())
-	}
+	t.Logf("block 1 size : %s, tx count : %d \n",block.Size().String(),block.Transactions().Len())
 }
