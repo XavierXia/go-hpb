@@ -257,12 +257,12 @@ func (this *fullSync) syncWithPeer(id string, p *peerConnection, hash common.Has
 	if err != nil {
 		return err
 	}
-	this.syncStatsLock.Lock()
+	this.syncer.syncStatsLock.Lock()
 	if this.syncStatsChainHeight <= origin || this.syncStatsChainOrigin > origin {
 		this.syncStatsChainOrigin = origin
 	}
 	this.syncStatsChainHeight = height
-	this.syncStatsLock.Unlock()
+	this.syncer.syncStatsLock.Unlock()
 
 	// Initiate the sync using a concurrent header and content retrieval algorithm
 	pivot := uint64(0)
