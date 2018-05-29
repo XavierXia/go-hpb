@@ -22,7 +22,6 @@ import (
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/constant"
 	"github.com/hpb-project/go-hpb/common/log"
-	hpbinter "github.com/hpb-project/go-hpb/interface"
 	"github.com/rcrowley/go-metrics"
 	"math/big"
 	"sync"
@@ -34,10 +33,6 @@ type lightSync struct {
 	syncer  *Syncer
 
 	fsPivotLock  *types.Header // Pivot header on critical section entry (cannot change between retries)
-
-	// Statistics
-	syncStatsChainOrigin uint64 // Origin block number where syncing started at
-	syncStatsChainHeight uint64 // Highest block number known when syncing started
 
 	// Channels
 	headerCh      chan dataPack        // Channel receiving inbound block headers
@@ -125,29 +120,6 @@ func (this *lightSync) terminate() {
 
 	// Cancel any pending light sync requests
 	this.cancel()
-}
-
-// progress retrieves the synchronisation boundaries, specifically the origin
-// block where synchronisation started at (may have failed/suspended); the block
-// or header sync is currently at; and the latest known block which the sync targets.
-//
-// In addition, during the state light sync phase of light synchronisation the number
-// of processed and the total number of known states are also returned. Otherwise
-// these are zero.
-func (this *lightSync) progress() hpbinter.SyncProgress {
-	// Lock the current stats and return the progress
-	this.syncer.syncStatsLock.RLock()
-	defer this.syncer.syncStatsLock.RUnlock()
-
-	current := uint64(0)
-	current = this.syncer.lightchain.CurrentHeader().Number.Uint64()
-	return hpbinter.SyncProgress{
-		StartingBlock: this.syncStatsChainOrigin,
-		CurrentBlock:  current,
-		HighestBlock:  this.syncStatsChainHeight,
-		PulledStates:  this.syncer.syncStatsState.processed,
-		KnownStates:   this.syncer.syncStatsState.processed + this.syncer.syncStatsState.pending,
-	}
 }
 
 // registerPeer injects a new light sync peer into the set of block source to be
@@ -257,10 +229,10 @@ func (this *lightSync) syncWithPeer(id string, p *peerConnection, hash common.Ha
 		return err
 	}
 	this.syncer.syncStatsLock.Lock()
-	if this.syncStatsChainHeight <= origin || this.syncStatsChainOrigin > origin {
-		this.syncStatsChainOrigin = origin
+	if this.syncer.syncStatsChainHeight <= origin || this.syncer.syncStatsChainOrigin > origin {
+		this.syncer.syncStatsChainOrigin = origin
 	}
-	this.syncStatsChainHeight = height
+	this.syncer.syncStatsChainHeight = height
 	this.syncer.syncStatsLock.Unlock()
 
 	// Initiate the sync using a concurrent header and content retrieval algorithm

@@ -166,6 +166,10 @@ type Syncer struct {
 	dropPeer peerDropFn // Drops a peer for misbehaving
 	sch     *scheduler   // Scheduler for selecting the hashes to sync
 
+	// Statistics
+	syncStatsChainOrigin uint64 // Origin block number where syncing started at
+	syncStatsChainHeight uint64 // Highest block number known when syncing started
+
 	rttEstimate   uint64 // Round trip time to target for sync requests
 	rttConfidence uint64 // Confidence in the estimated RTT (unit: millionths to allow atomic ops)
 
@@ -219,6 +223,28 @@ func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightc
 	go syn.stateFetcher()
 
 	return syn
+}
+
+// Progress retrieves the synchronisation boundaries, specifically the origin
+// block where synchronisation started at (may have failed/suspended); the block
+// or header sync is currently at; and the latest known block which the sync targets.
+//
+// In addition, during the state sync phase of fast synchronisation the number
+// of processed and the total number of known states are also returned. Otherwise
+// these are zero.
+func (this *Syncer) Progress() hpbinter.SyncProgress {
+	// Lock the current stats and return the progress
+	this.syncStatsLock.RLock()
+	defer this.syncStatsLock.RUnlock()
+
+	current := core.InstanceBlockChain().CurrentBlock().NumberU64()
+	return hpbinter.SyncProgress{
+		StartingBlock: this.syncStatsChainOrigin,
+		CurrentBlock:  current,
+		HighestBlock:  this.syncStatsChainHeight,
+		PulledStates:  this.syncStatsState.processed,
+		KnownStates:   this.syncStatsState.processed + this.syncStatsState.pending,
+	}
 }
 
 // Start tries to sync up our local block chain with a remote peer, both
