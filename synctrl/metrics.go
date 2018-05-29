@@ -40,4 +40,24 @@ var (
 
 	stateInMeter   = metrics.NewMeter("hpb/syn/states/in")
 	stateDropMeter = metrics.NewMeter("hpb/syn/states/drop")
+
+	//Puller metrics
+	propAnnounceInMeter   = metrics.NewMeter("hpb/puller/prop/announces/in")
+	propAnnounceOutTimer  = metrics.NewTimer("hpb/puller/prop/announces/out")
+	propAnnounceDropMeter = metrics.NewMeter("hpb/puller/prop/announces/drop")
+	propAnnounceDOSMeter  = metrics.NewMeter("hpb/puller/prop/announces/dos")
+
+	propBroadcastInMeter   = metrics.NewMeter("hpb/puller/prop/broadcasts/in")
+	propBroadcastOutTimer  = metrics.NewTimer("hpb/puller/prop/broadcasts/out")
+	propBroadcastDropMeter = metrics.NewMeter("hpb/puller/prop/broadcasts/drop")
+	propBroadcastDOSMeter  = metrics.NewMeter("hpb/puller/prop/broadcasts/dos")
+
+	headerFetchMeter = metrics.NewMeter("hpb/puller/fetch/headers")
+	bodyFetchMeter   = metrics.NewMeter("hpb/puller/fetch/bodies")
+
+	headerFilterInMeter  = metrics.NewMeter("hpb/puller/filter/headers/in")
+	headerFilterOutMeter = metrics.NewMeter("hpb/puller/filter/headers/out")
+	bodyFilterInMeter    = metrics.NewMeter("hpb/puller/filter/bodies/in")
+	bodyFilterOutMeter   = metrics.NewMeter("hpb/puller/filter/bodies/out")
+
 )

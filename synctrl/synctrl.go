@@ -37,9 +37,12 @@ import (
 )
 
 const (
-	syncInterval        = 10 * time.Second
-	txChanCache         = 100000
-	txsyncPackSize      = 100 * 1024
+	forceSyncCycle      = 10 * time.Second
+	minDesiredPeerCount = 5 // Amount of peers desired to start syncing
+	txChanSize = 100000
+	// This is the target size for the packs of transactions sent by txsyncLoop.
+	// A pack can get larger than this if a single transactions exceeds this size.
+	txsyncPackSize = 100 * 1024
 )
 
 // SyncMode represents the synchronisation mode of the downloader.
@@ -109,8 +112,8 @@ type SynCtrl struct {
 	chainconfig *params.ChainConfig
 	maxPeers    int
 
-	syncer      *syncer
-	puller      *puller
+	syner       *Syncer
+	puller      *Puller
 	peers       *peerSet //todo
 
 	SubProtocols []p2p.Protocol
@@ -154,7 +157,7 @@ func NewSynCtrl(config *params.ChainConfig, mode SyncMode, networkId uint64, mux
 		synctrl.fastSync = uint32(1)
 	}
 	// Construct the different synchronisation mechanisms
-	synctrl.syncer = NewSyncer(mode, chaindb, synctrl.eventMux, nil, synctrl.removePeer)//todo removePeer
+	synctrl.syner = NewSyncer(mode, chaindb, synctrl.eventMux, nil, synctrl.removePeer)//todo removePeer
 
 	validator := func(header *types.Header) error {
 		return engine.VerifyHeader(core.InstanceBlockChain(), header, true)
@@ -176,12 +179,224 @@ func NewSynCtrl(config *params.ChainConfig, mode SyncMode, networkId uint64, mux
 	return synctrl, nil
 }
 
-func (this *SynCtrl) Start() error {
+func (this *SynCtrl) Start() {
+	// broadcast transactions
+	this.txCh = make(chan core.TxPreEvent, txChanSize)
+	this.txSub = this.txpool.SubscribeTxPreEvent(this.txCh)//todo by xinyu
+	go this.txBroadcastLoop()
 
+	// broadcast mined blocks
+	this.minedBlockSub = this.eventMux.Subscribe(core.NewMinedBlockEvent{})
+	go this.minedBroadcastLoop()
+
+	// start sync handlers
+	go this.sync()
+	go this.txsyncLoop()
+}
+
+// txsyncLoop takes care of the initial transaction sync for each new
+// connection. When a new peer appears, we relay all currently pending
+// transactions. In order to minimise egress bandwidth usage, we send
+// the transactions in small packs to one peer at a time.
+func (this *SynCtrl) txsyncLoop() {
+	var (
+		pending = make(map[discover.NodeID]*txsync)
+		sending = false               // whether a send is active
+		pack    = new(txsync)         // the pack that is being sent
+		done    = make(chan error, 1) // result of the send
+	)
+
+	// send starts a sending a pack of transactions from the sync.
+	send := func(s *txsync) {
+		// Fill pack with transactions up to the target size.
+		size := common.StorageSize(0)
+		pack.p = s.p
+		pack.txs = pack.txs[:0]
+		for i := 0; i < len(s.txs) && size < txsyncPackSize; i++ {
+			pack.txs = append(pack.txs, s.txs[i])
+			size += s.txs[i].Size()
+		}
+		// Remove the transactions that will be sent.
+		s.txs = s.txs[:copy(s.txs, s.txs[len(pack.txs):])]
+		if len(s.txs) == 0 {
+			delete(pending, s.p.ID())
+		}
+		// Send the pack in the background.
+		s.p.Log().Trace("Sending batch of transactions", "count", len(pack.txs), "bytes", size)
+		sending = true
+		go func() { done <- pack.p.SendTransactions(pack.txs) }()
+	}
+
+	// pick chooses the next pending sync.
+	pick := func() *txsync {
+		if len(pending) == 0 {
+			return nil
+		}
+		n := rand.Intn(len(pending)) + 1
+		for _, s := range pending {
+			if n--; n == 0 {
+				return s
+			}
+		}
+		return nil
+	}
+
+	for {
+		select {
+		case s := <-this.txsyncCh:
+			pending[s.p.ID()] = s
+			if !sending {
+				send(s)
+			}
+		case err := <-done:
+			sending = false
+			// Stop tracking peers that cause send failures.
+			if err != nil {
+				pack.p.Log().Debug("Transaction send failed", "err", err)
+				delete(pending, pack.p.ID())
+			}
+			// Schedule the next send.
+			if s := pick(); s != nil {
+				send(s)
+			}
+		case <-this.quitSync:
+			return
+		}
+	}
+}
+
+func (this *SynCtrl) txBroadcastLoop() {
+	for {
+		select {
+		case event := <-this.txCh:
+			this.BroadcastTx(event.Tx.Hash(), event.Tx)
+
+			// Err() channel will be closed when unsubscribing.
+		case <-this.txSub.Err():
+			return
+		}
+	}
+}
+
+// Mined broadcast loop
+func (this *SynCtrl) minedBroadcastLoop() {
+	// automatically stops if unsubscribe
+	for obj := range this.minedBlockSub.Chan() {
+		switch ev := obj.Data.(type) {
+		case core.NewMinedBlockEvent:
+			this.BroadcastBlock(ev.Block, true)  // First propagate block to peers
+			this.BroadcastBlock(ev.Block, false) // Only then announce to the rest
+		}
+	}
+}
+
+// syncer is responsible for periodically synchronising with the network, both
+// downloading hashes and blocks as well as handling the announcement handler.
+func (this *SynCtrl) sync() {
+	// Start and ensure cleanup of sync mechanisms
+	this.puller.Start()
+	defer this.puller.Stop()
+	defer this.syner.Terminate()
+
+	// Wait for different events to fire synchronisation operations
+	forceSync := time.NewTicker(forceSyncCycle)
+	defer forceSync.Stop()
+
+	for {
+		select {
+		case <-this.newPeerCh:
+			// Make sure we have peers to select from, then sync
+			if this.peers.Len() < minDesiredPeerCount {
+				break
+			}
+			go this.synchronise(this.peers.BestPeer())
+
+		case <-forceSync.C:
+			// Force a sync even if not enough peers are present
+			go this.synchronise(this.peers.BestPeer())
+
+		case <-this.noMorePeers:
+			return
+		}
+	}
+}
+
+// synchronise tries to sync up our local block chain with a remote peer.
+func (this *SynCtrl) synchronise(peer *peer) {
+	// Short circuit if no peers are available
+	if peer == nil {
+		return
+	}
+	// Make sure the peer's TD is higher than our own
+	currentBlock := core.InstanceBlockChain().CurrentBlock()
+	td := core.InstanceBlockChain().GetTd(currentBlock.Hash(), currentBlock.NumberU64())
+
+	pHead, pTd := peer.Head()
+
+	if pTd.Cmp(td) <= 0 {
+		return
+	}
+	// Otherwise try to sync with the downloader
+	mode := FullSync
+	if atomic.LoadUint32(&this.fastSync) == 1 {
+		// Fast sync was explicitly requested, and explicitly granted
+		mode = FastSync
+	} else if currentBlock.NumberU64() == 0 && core.InstanceBlockChain().CurrentFastBlock().NumberU64() > 0 {
+		// The database seems empty as the current block is the genesis. Yet the fast
+		// block is ahead, so fast sync was enabled for this node at a certain point.
+		// The only scenario where this can happen is if the user manually (or via a
+		// bad block) rolled back a fast sync node below the sync point. In this case
+		// however it's safe to reenable fast sync.
+		atomic.StoreUint32(&this.fastSync, 1)
+		mode = FastSync
+	}
+	// Run the sync cycle, and disable fast sync if we've went past the pivot block
+	err := this.syner.Start(peer.id, pHead, pTd, mode)
+
+	if atomic.LoadUint32(&this.fastSync) == 1 {
+		// Disable fast sync if we indeed have something in our chain
+		if core.InstanceBlockChain().CurrentBlock().NumberU64() > 0 {
+			atomic.StoreUint32(&this.fastSync, 0)
+		}
+	}
+	if err != nil {
+		return
+	}
+	atomic.StoreUint32(&this.acceptTxs, 1) // Mark initial sync done
+	if head := core.InstanceBlockChain().CurrentBlock(); head.NumberU64() > 0 {
+		// We've completed a sync cycle, notify all peers of new state. This path is
+		// essential in star-topology networks where a gateway node needs to notify
+		// all its out-of-date peers of the availability of a new block. This failure
+		// scenario will most often crop up in private and hackathon networks with
+		// degenerate connectivity, but it should be healthy for the mainnet too to
+		// more reliably update peers or the local TD state.
+		go this.BroadcastBlock(head, false)
+	}
 }
 
 func (this *SynCtrl) Stop() {
+	log.Info("Stopping Hpb data sync")
 
+	this.txSub.Unsubscribe()         // quits txBroadcastLoop
+	this.minedBlockSub.Unsubscribe() // quits blockBroadcastLoop
+
+	// Quit the sync loop.
+	// After this send has completed, no new peers will be accepted.
+	this.noMorePeers <- struct{}{}
+
+	// Quit fetcher, txsyncLoop.
+	close(this.quitSync)
+
+	// Disconnect existing sessions.
+	// This also closes the gate for any new registrations on the peer set.
+	// sessions which are already established but not added to pm.peers yet
+	// will exit when they try to register.
+	this.peers.Close()//todo qinghua's
+
+	// Wait for all peer handler goroutines and the loops to come down.
+	this.wg.Wait()
+
+	log.Info("Hpb data sync stopped")
 }
 
 // BroadcastBlock will either propagate a block to a subset of it's peers, or
@@ -251,7 +466,7 @@ func (this *SynCtrl) removePeer(id string) {
 	log.Debug("Removing Hpb peer", "peer", id)
 
 	// Unregister the peer from the downloader and Hpb peer set
-	this.syncer.UnregisterPeer(id)
+	this.syner.UnregisterPeer(id)
 	if err := this.peers.Unregister(id); err != nil {
 		log.Error("Peer removal failed", "peer", id, "err", err)
 	}

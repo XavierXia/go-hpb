@@ -28,6 +28,7 @@ import (
 	hpbinter "github.com/hpb-project/go-hpb/interface"
 	"github.com/hpb-project/go-hpb/storage"
 	"math/big"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -172,6 +173,8 @@ type Syncer struct {
 	stateSyncStart chan *stateSync
 	trackStateReq  chan *stateReq
 	stateCh        chan dataPack // Channel receiving inbound node state data
+	syncStatsState stateSyncStats
+	syncStatsLock  sync.RWMutex // Lock protecting the sync stats fields
 	// Status
 	synchroniseMock func(id string, hash common.Hash) error // Replacement for synchronise during testing
 	synchronising   int32

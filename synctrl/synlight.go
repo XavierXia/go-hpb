@@ -38,8 +38,6 @@ type lightSync struct {
 	// Statistics
 	syncStatsChainOrigin uint64 // Origin block number where syncing started at
 	syncStatsChainHeight uint64 // Highest block number known when syncing started
-	syncStatsState       stateSyncStats
-	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
 
 	// Channels
 	headerCh      chan dataPack        // Channel receiving inbound block headers
@@ -138,8 +136,8 @@ func (this *lightSync) terminate() {
 // these are zero.
 func (this *lightSync) progress() hpbinter.SyncProgress {
 	// Lock the current stats and return the progress
-	this.syncStatsLock.RLock()
-	defer this.syncStatsLock.RUnlock()
+	this.syncer.syncStatsLock.RLock()
+	defer this.syncer.syncStatsLock.RUnlock()
 
 	current := uint64(0)
 	current = this.syncer.lightchain.CurrentHeader().Number.Uint64()
@@ -147,8 +145,8 @@ func (this *lightSync) progress() hpbinter.SyncProgress {
 		StartingBlock: this.syncStatsChainOrigin,
 		CurrentBlock:  current,
 		HighestBlock:  this.syncStatsChainHeight,
-		PulledStates:  this.syncStatsState.processed,
-		KnownStates:   this.syncStatsState.processed + this.syncStatsState.pending,
+		PulledStates:  this.syncer.syncStatsState.processed,
+		KnownStates:   this.syncer.syncStatsState.processed + this.syncer.syncStatsState.pending,
 	}
 }
 
@@ -258,12 +256,12 @@ func (this *lightSync) syncWithPeer(id string, p *peerConnection, hash common.Ha
 	if err != nil {
 		return err
 	}
-	this.syncStatsLock.Lock()
+	this.syncer.syncStatsLock.Lock()
 	if this.syncStatsChainHeight <= origin || this.syncStatsChainOrigin > origin {
 		this.syncStatsChainOrigin = origin
 	}
 	this.syncStatsChainHeight = height
-	this.syncStatsLock.Unlock()
+	this.syncer.syncStatsLock.Unlock()
 
 	// Initiate the sync using a concurrent header and content retrieval algorithm
 	pivot := uint64(0)

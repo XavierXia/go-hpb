@@ -40,8 +40,6 @@ type fullSync struct {
 	// Statistics
 	syncStatsChainOrigin uint64 // Origin block number where syncing started at
 	syncStatsChainHeight uint64 // Highest block number known when syncing started
-	syncStatsState       stateSyncStats
-	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
 
 	// Channels
 	headerCh      chan dataPack        // Channel receiving inbound block headers
@@ -140,16 +138,16 @@ func (this *fullSync) terminate() {
 // these are zero.
 func (this *fullSync) progress() hpbinter.SyncProgress {
 	// Lock the current stats and return the progress
-	this.syncStatsLock.RLock()
-	defer this.syncStatsLock.RUnlock()
+	this.syncer.syncStatsLock.RLock()
+	defer this.syncer.syncStatsLock.RUnlock()
 
 	current := core.InstanceBlockChain().CurrentBlock().NumberU64()
 	return hpbinter.SyncProgress{
 		StartingBlock: this.syncStatsChainOrigin,
 		CurrentBlock:  current,
 		HighestBlock:  this.syncStatsChainHeight,
-		PulledStates:  this.syncStatsState.processed,
-		KnownStates:   this.syncStatsState.processed + this.syncStatsState.pending,
+		PulledStates:  this.syncer.syncStatsState.processed,
+		KnownStates:   this.syncer.syncStatsState.processed + this.syncer.syncStatsState.pending,
 	}
 }
 
