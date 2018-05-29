@@ -17,16 +17,13 @@
 package synctrl
 
 import (
-	"crypto/rand"
 	"fmt"
 	"github.com/hpb-project/go-hpb/blockchain"
-	"github.com/hpb-project/go-hpb/blockchain/event"
 	"github.com/hpb-project/go-hpb/blockchain/types"
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/constant"
 	"github.com/hpb-project/go-hpb/common/log"
 	hpbinter "github.com/hpb-project/go-hpb/interface"
-	"github.com/hpb-project/go-hpb/storage"
 	"github.com/rcrowley/go-metrics"
 	"math"
 	"math/big"
@@ -36,33 +33,15 @@ import (
 )
 
 type fullSync struct {
-	mux     *event.TypeMux // Event multiplexer to announce sync operation events
-
-	sch     *scheduler   // Scheduler for selecting the hashes to sync
-	peers   *peerSet // Set of active peers from which sync can proceed
-	stateDB hpbdb.Database
+	syncer  *Syncer
 
 	fsPivotLock  *types.Header // Pivot header on critical section entry (cannot change between retries)
-	fsPivotFails uint32        // Number of subsequent fast sync failures in the critical section
-
-	rttEstimate   uint64 // Round trip time to target for sync requests
-	rttConfidence uint64 // Confidence in the estimated RTT (unit: millionths to allow atomic ops)
 
 	// Statistics
 	syncStatsChainOrigin uint64 // Origin block number where syncing started at
 	syncStatsChainHeight uint64 // Highest block number known when syncing started
 	syncStatsState       stateSyncStats
 	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
-
-	lightchain LightChain
-
-	// Callbacks
-	dropPeer peerDropFn // Drops a peer for misbehaving
-
-	// Status
-	synchroniseMock func(id string, hash common.Hash) error // Replacement for synchronise during testing
-	synchronising   int32
-	notified        int32
 
 	// Channels
 	headerCh      chan dataPack        // Channel receiving inbound block headers
@@ -72,17 +51,11 @@ type fullSync struct {
 	receiptWakeCh chan bool            // Channel to signal the receipt fetcher of new tasks
 	headerProcCh  chan []*types.Header // Channel to feed the header processor new tasks
 
-	// for stateFetcher
-	stateSyncStart chan *stateSync
-	trackStateReq  chan *stateReq
-	stateCh        chan dataPack // Channel receiving inbound node state data
-
 	// Cancellation and termination
 	cancelPeer string        // Identifier of the peer currently being used as the master (cancel on drop)
 	cancelCh   chan struct{} // Channel to cancel mid-flight syncs
 	cancelLock sync.RWMutex  // Lock to protect the cancel channel and peer in delivers
 
-	quitCh   chan struct{} // Quit channel to signal termination
 	quitLock sync.RWMutex  // Lock to prevent double closes
 
 	// Testing hooks
@@ -92,34 +65,16 @@ type fullSync struct {
 	chainInsertHook  func([]*fetchResult)  // Method to call upon inserting a chain of blocks (possibly in multiple invocations)
 }
 
-func newFullsync(stateDb hpbdb.Database, mux *event.TypeMux, lightchain LightChain,
-	dropPeer peerDropFn) *fullSync {
-	if lightchain == nil {
-		lightchain = core.InstanceBlockChain()
-	}
-
+func newFullsync(syncer *Syncer) *fullSync {
 	full := &fullSync{
-		stateDB:        stateDb,
-		mux:            mux,
-		sch:          newScheduler(),
-		peers:          newPeerSet(),
-		rttEstimate:    uint64(rttMaxEstimate),
-		rttConfidence:  uint64(1000000),
-		lightchain:     lightchain,
-		dropPeer:       dropPeer,
+		syncer:         syncer,
 		headerCh:       make(chan dataPack, 1),
 		bodyCh:         make(chan dataPack, 1),
 		receiptCh:      make(chan dataPack, 1),
 		bodyWakeCh:     make(chan bool, 1),
 		receiptWakeCh:  make(chan bool, 1),
 		headerProcCh:   make(chan []*types.Header, 1),
-		quitCh:         make(chan struct{}),
-		stateCh:        make(chan dataPack),
-		stateSyncStart: make(chan *stateSync),
-		trackStateReq:  make(chan *stateReq),
 	}
-	go full.qosTuner()
-	go full.stateFetcher()
 	return full
 }
 
@@ -141,29 +96,8 @@ func (this *fullSync) deliverReceipts(id string, receipts [][]*types.Receipt) (e
 
 // DeliverNodeData injects a new batch of node state data received from a remote node.
 func (this *fullSync) deliverNodeData(id string, data [][]byte) (err error) {
-	return this.deliver(id, this.stateCh, &statePack{id, data}, stateInMeter, stateDropMeter)
+	return this.deliver(id, this.syncer.stateCh, &statePack{id, data}, stateInMeter, stateDropMeter)
 }
-
-// Synchronise tries to sync up our local block chain with a remote peer, both
-// adding various sanity checks as well as wrapping it with various log entries.
-func (this *fullSync) start(id string, head common.Hash, td *big.Int, mode SyncMode) error {
-	err := this.syn(id, head, td, mode)
-	switch err {
-	case nil:
-	case errBusy:
-
-	case errTimeout, errBadPeer, errStallingPeer,
-		errEmptyHeaderSet, errPeersUnavailable, errProVLowerBase,
-		errInvalidAncestor, errInvalidChain:
-		log.Warn("Synchronisation failed, dropping peer", "peer", id, "err", err)
-		this.dropPeer(id)
-
-	default:
-		log.Warn("Synchronisation failed, retrying", "err", err)
-	}
-	return err
-}
-
 
 // Cancel cancels all of the operations and resets the sch. It returns true
 // if the cancel operation was completed.
@@ -187,9 +121,9 @@ func (this *fullSync) terminate() {
 	// Close the termination channel (make sure double close is allowed)
 	this.quitLock.Lock()
 	select {
-	case <-this.quitCh:
+	case <-this.syncer.quitCh:
 	default:
-		close(this.quitCh)
+		close(this.syncer.quitCh)
 	}
 	this.quitLock.Unlock()
 
@@ -219,18 +153,13 @@ func (this *fullSync) progress() hpbinter.SyncProgress {
 	}
 }
 
-// syning returns whether the syncer is currently retrieving blocks.
-func (this *fullSync) syning() bool {
-	return atomic.LoadInt32(&this.synchronising) > 0
-}
-
 // RegisterPeer injects a new sync peer into the set of block source to be
 // used for fetching hashes and blocks from.
 func (this *fullSync) registerPeer(id string, version uint, peer Peer) error {
 
 	logger := log.New("peer", id)
 	logger.Trace("Registering sync peer")
-	if err := this.peers.Register(newPeerConnection(id, version, peer, logger)); err != nil {
+	if err := this.syncer.peers.Register(newPeerConnection(id, version, peer, logger)); err != nil {
 		logger.Error("Failed to register sync peer", "err", err)
 		return err
 	}
@@ -251,11 +180,11 @@ func (this *fullSync) unregisterPeer(id string) error {
 	// Unregister the peer from the active peer set and revoke any fetch tasks
 	logger := log.New("peer", id)
 	logger.Trace("Unregistering sync peer")
-	if err := this.peers.Unregister(id); err != nil {
+	if err := this.syncer.peers.Unregister(id); err != nil {
 		logger.Error("Failed to unregister sync peer", "err", err)
 		return err
 	}
-	this.sch.Revoke(id)
+	this.syncer.sch.Revoke(id)
 
 	// If this peer was the master peer, abort sync immediately
 	this.cancelLock.RLock()
@@ -268,28 +197,9 @@ func (this *fullSync) unregisterPeer(id string) error {
 	return nil
 }
 
-// syn will select the peer and use it for synchronising. If an empty string is given
-// it will use the best peer possible and synchronize if it's TD is higher than our own. If any of the
-// checks fail an error will be returned. This method is synchronous
-func (this *fullSync) syn(id string, hash common.Hash, td *big.Int, mode SyncMode) error {
-	// Mock out the synchronisation if testing
-	if this.synchroniseMock != nil {
-		return this.synchroniseMock(id, hash)
-	}
-	// Make sure only one goroutine is ever allowed past this point at once
-	if !atomic.CompareAndSwapInt32(&this.synchronising, 0, 1) {
-		return errBusy
-	}
-	defer atomic.StoreInt32(&this.synchronising, 0)
-
-	// Post a user notification of the sync (only once per session)
-	if atomic.CompareAndSwapInt32(&this.notified, 0, 1) {
-		log.Info("Block synchronisation started")
-	}
-	// Reset the sch, peer set and wake channels to clean any internal leftover state
-	this.sch.Reset()
-	this.peers.Reset()
-
+// syncWithPeer starts a block synchronization based on the hash chain from the
+// specified peer and head hash.
+func (this *fullSync) syncWithPeer(id string, p *peerConnection, hash common.Hash, td *big.Int) (err error) {
 	for _, ch := range []chan bool{this.bodyWakeCh, this.receiptWakeCh} {
 		select {
 		case <-ch:
@@ -320,36 +230,20 @@ func (this *fullSync) syn(id string, hash common.Hash, td *big.Int, mode SyncMod
 
 	defer this.cancel() // No matter what, we can't leave the cancel channel open
 
-	// Set the requested sync mode, unless it's forbidden
-	this.mode = mode
-	if this.mode == FastSync && atomic.LoadUint32(&this.fsPivotFails) >= fsCriticalTrials {
-		this.mode = FullSync
-	}
-	// Retrieve the origin peer and initiate the syncing process
-	p := this.peers.Peer(id)
-	if p == nil {
-		return errUnknownPeer
-	}
-	return this.syncWithPeer(p, hash, td)
-}
-
-// syncWithPeer starts a block synchronization based on the hash chain from the
-// specified peer and head hash.
-func (this *fullSync) syncWithPeer(p *peerConnection, hash common.Hash, td *big.Int) (err error) {
-	this.mux.Post(StartEvent{})
+	this.syncer.mux.Post(StartEvent{})
 	defer func() {
 		// reset on error
 		if err != nil {
-			this.mux.Post(FailedEvent{err})
+			this.syncer.mux.Post(FailedEvent{err})
 		} else {
-			this.mux.Post(DoneEvent{})
+			this.syncer.mux.Post(DoneEvent{})
 		}
 	}()
 	if p.version < params.ProtocolV111  {
 		return errProVLowerBase
 	}
 
-	log.Debug("Synchronising with the network", "peer", p.id, "hpb", p.version, "head", hash, "td", td, "mode", this.mode)
+	log.Debug("Synchronising with the network", "peer", p.id, "hpb", p.version, "head", hash, "td", td, "mode", FullSync)
 	defer func(start time.Time) {
 		log.Debug("Synchronisation terminated", "elapsed", time.Since(start))
 	}(time.Now())
@@ -374,34 +268,7 @@ func (this *fullSync) syncWithPeer(p *peerConnection, hash common.Hash, td *big.
 
 	// Initiate the sync using a concurrent header and content retrieval algorithm
 	pivot := uint64(0)
-	switch this.mode {
-	case LightSync:
-		pivot = height
-	case FastSync:
-		// Calculate the new fast/slow sync pivot point
-		if this.fsPivotLock == nil {
-			pivotOffset, err := rand.Int(rand.Reader, big.NewInt(int64(fsPivotInterval)))
-			if err != nil {
-				panic(fmt.Sprintf("Failed to access crypto random source: %v", err))
-			}
-			if height > uint64(fsMinFullBlocks)+pivotOffset.Uint64() {
-				pivot = height - uint64(fsMinFullBlocks) - pivotOffset.Uint64()
-			}
-		} else {
-			// Pivot point locked in, use this and do not pick a new one!
-			pivot = this.fsPivotLock.Number.Uint64()
-		}
-		// If the point is below the origin, move origin back to ensure state sync
-		if pivot < origin {
-			if pivot > 0 {
-				origin = pivot - 1
-			} else {
-				origin = 0
-			}
-		}
-		log.Debug("Fast syncing until pivot block", "pivot", pivot)
-	}
-	this.sch.Prepare(origin+1, this.mode, pivot, latest)
+	this.syncer.sch.Prepare(origin+1, FullSync, pivot, latest)
 	if this.syncInitHook != nil {
 		this.syncInitHook(origin, height)
 	}
@@ -412,16 +279,8 @@ func (this *fullSync) syncWithPeer(p *peerConnection, hash common.Hash, td *big.
 		func() error { return this.fetchReceipts(origin + 1) }, // Receipts are retrieved during fast sync
 		func() error { return this.processHeaders(origin+1, td) },
 	}
-	if this.mode == FastSync {
-		fetchers = append(fetchers, func() error { return this.processFastSyncContent(latest) })
-	} else if this.mode == FullSync {
-		fetchers = append(fetchers, this.processFullSyncContent)
-	}
+	fetchers = append(fetchers, this.processFullSyncContent)
 	err = this.spawnSync(fetchers)
-	if err != nil && this.mode == FastSync && this.fsPivotLock != nil {
-		// If sync failed in the critical section, bump the fail counter.
-		atomic.AddUint32(&this.fsPivotFails, 1)
-	}
 	return err
 }
 
@@ -442,13 +301,13 @@ func (this *fullSync) spawnSync(fetchers []func() error) error {
 			// Close the sch when all fetchers have exited.
 			// This will cause the block processor to end when
 			// it has processed the sch.
-			this.sch.Close()
+			this.syncer.sch.Close()
 		}
 		if err = <-errc; err != nil {
 			break
 		}
 	}
-	this.sch.Close()
+	this.syncer.sch.Close()
 	this.cancel()
 	wg.Wait()
 	return err
@@ -463,7 +322,7 @@ func (this *fullSync) fetchHeight(p *peerConnection) (*types.Header, error) {
 	head, _ := p.peer.Head()
 	go p.peer.RequestHeadersByHash(head, 1, 0, false)
 
-	ttl := this.requestTTL()
+	ttl := this.syncer.requestTTL()
 	timeout := time.After(ttl)
 	for {
 		select {
@@ -504,14 +363,10 @@ func (this *fullSync) fetchHeight(p *peerConnection) (*types.Header, error) {
 // the head links match), we do a binary search to find the common ancestor.
 func (this *fullSync) findAncestor(p *peerConnection, height uint64) (uint64, error) {
 	// Figure out the valid ancestor range to prevent rewrite attacks
-	floor, ceil := int64(-1), this.lightchain.CurrentHeader().Number.Uint64()
+	floor, ceil := int64(-1), this.syncer.lightchain.CurrentHeader().Number.Uint64()
 
 	p.log.Debug("Looking for common ancestor", "local", ceil, "remote", height)
-	if this.mode == FullSync {
-		ceil = core.InstanceBlockChain().CurrentBlock().NumberU64()
-	} else if this.mode == FastSync {
-		ceil = core.InstanceBlockChain().CurrentFastBlock().NumberU64()
-	}
+	ceil = core.InstanceBlockChain().CurrentBlock().NumberU64()
 	if ceil >= MaxForkAncestry {
 		floor = int64(ceil - MaxForkAncestry)
 	}
@@ -535,7 +390,7 @@ func (this *fullSync) findAncestor(p *peerConnection, height uint64) (uint64, er
 	// Wait for the remote response to the head fetch
 	number, hash := uint64(0), common.Hash{}
 
-	ttl := this.requestTTL()
+	ttl := this.syncer.requestTTL()
 	timeout := time.After(ttl)
 
 	for finished := false; !finished; {
@@ -570,8 +425,7 @@ func (this *fullSync) findAncestor(p *peerConnection, height uint64) (uint64, er
 					continue
 				}
 				// Otherwise check if we already know the header or not
-				if (this.mode == FullSync && core.InstanceBlockChain().HasBlockAndState(headers[i].Hash())) ||
-					(this.mode != FullSync && this.lightchain.HasHeader(headers[i].Hash(), headers[i].Number.Uint64())) {
+				if core.InstanceBlockChain().HasBlockAndState(headers[i].Hash()) {
 					number, hash = headers[i].Number.Uint64(), headers[i].Hash()
 
 					// If every header is known, even future ones, the peer straight out lied about its head
@@ -610,7 +464,7 @@ func (this *fullSync) findAncestor(p *peerConnection, height uint64) (uint64, er
 		// Split our chain interval in two, and request the hash to cross check
 		check := (start + end) / 2
 
-		ttl := this.requestTTL()
+		ttl := this.syncer.requestTTL()
 		timeout := time.After(ttl)
 
 		go p.peer.RequestHeadersByNumber(uint64(check), 1, 0, false)
@@ -636,11 +490,11 @@ func (this *fullSync) findAncestor(p *peerConnection, height uint64) (uint64, er
 				arrived = true
 
 				// Modify the search interval based on the response
-				if (this.mode == FullSync && !core.InstanceBlockChain().HasBlockAndState(headers[0].Hash())) || (this.mode != FullSync && !this.lightchain.HasHeader(headers[0].Hash(), headers[0].Number.Uint64())) {
+				if !core.InstanceBlockChain().HasBlockAndState(headers[0].Hash()) {
 					end = check
 					break
 				}
-				header := this.lightchain.GetHeaderByHash(headers[0].Hash()) // Independent of sync mode, header surely exists
+				header := this.syncer.lightchain.GetHeaderByHash(headers[0].Hash()) // Independent of sync mode, header surely exists
 				if header.Number.Uint64() != check {
 					p.log.Debug("Received non requested header", "number", header.Number, "hash", header.Hash(), "request", check)
 					return 0, errBadPeer
@@ -689,7 +543,7 @@ func (this *fullSync) fetchHeaders(p *peerConnection, from uint64) error {
 	getHeaders := func(from uint64) {
 		request = time.Now()
 
-		ttl = this.requestTTL()
+		ttl = this.syncer.requestTTL()
 		timeout.Reset(ttl)
 
 		if skeleton {
@@ -761,7 +615,7 @@ func (this *fullSync) fetchHeaders(p *peerConnection, from uint64) error {
 			// Header retrieval timed out, consider the peer bad and drop
 			p.log.Debug("Header request timed out", "elapsed", ttl)
 			headerTimeoutMeter.Mark(1)
-			this.dropPeer(p.id)
+			this.syncer.dropPeer(p.id)
 
 			// Finish the sync gracefully instead of dumping the gathered data though
 			for _, ch := range []chan bool{this.bodyWakeCh, this.receiptWakeCh} {
@@ -790,29 +644,29 @@ func (this *fullSync) fetchHeaders(p *peerConnection, from uint64) error {
 // already forwarded for processing.
 func (this *fullSync) fillHeaderSkeleton(from uint64, skeleton []*types.Header) ([]*types.Header, int, error) {
 	log.Debug("Filling up skeleton", "from", from)
-	this.sch.ScheduleSkeleton(from, skeleton)
+	this.syncer.sch.ScheduleSkeleton(from, skeleton)
 
 	var (
 		deliver = func(packet dataPack) (int, error) {
 			pack := packet.(*headerPack)
-			return this.sch.DeliverHeaders(pack.peerId, pack.headers, this.headerProcCh)
+			return this.syncer.sch.DeliverHeaders(pack.peerId, pack.headers, this.headerProcCh)
 		}
-		expire   = func() map[string]int { return this.sch.ExpireHeaders(this.requestTTL()) }
+		expire   = func() map[string]int { return this.syncer.sch.ExpireHeaders(this.syncer.requestTTL()) }
 		throttle = func() bool { return false }
 		reserve  = func(p *peerConnection, count int) (*fetchRequest, bool, error) {
-			return this.sch.ReserveHeaders(p, count), false, nil
+			return this.syncer.sch.ReserveHeaders(p, count), false, nil
 		}
 		fetch    = func(p *peerConnection, req *fetchRequest) error { return p.FetchHeaders(req.From, MaxHeaderFetch) }
 		capacity = func(p *peerConnection) int { return p.HeaderCapacity(this.requestRTT()) }
 		setIdle  = func(p *peerConnection, accepted int) { p.SetHeadersIdle(accepted) }
 	)
-	err := this.fetchParts(errCancelHeaderFetch, this.headerCh, deliver, this.sch.headerContCh, expire,
-		this.sch.PendingHeaders, this.sch.InFlightHeaders, throttle, reserve,
-		nil, fetch, this.sch.CancelHeaders, capacity, this.peers.HeaderIdlePeers, setIdle, "headers")
+	err := this.fetchParts(errCancelHeaderFetch, this.headerCh, deliver, this.syncer.sch.headerContCh, expire,
+		this.syncer.sch.PendingHeaders, this.syncer.sch.InFlightHeaders, throttle, reserve,
+		nil, fetch, this.syncer.sch.CancelHeaders, capacity, this.syncer.peers.HeaderIdlePeers, setIdle, "headers")
 
 	log.Debug("Skeleton fill terminated", "err", err)
 
-	filled, proced := this.sch.RetrieveHeaders()
+	filled, proced := this.syncer.sch.RetrieveHeaders()
 	return filled, proced, err
 }
 
@@ -825,16 +679,16 @@ func (this *fullSync) fetchBodies(from uint64) error {
 	var (
 		deliver = func(packet dataPack) (int, error) {
 			pack := packet.(*bodyPack)
-			return this.sch.DeliverBodies(pack.peerId, pack.transactions, pack.uncles)
+			return this.syncer.sch.DeliverBodies(pack.peerId, pack.transactions, pack.uncles)
 		}
-		expire   = func() map[string]int { return this.sch.ExpireBodies(this.requestTTL()) }
+		expire   = func() map[string]int { return this.syncer.sch.ExpireBodies(this.syncer.requestTTL()) }
 		fetch    = func(p *peerConnection, req *fetchRequest) error { return p.FetchBodies(req) }
 		capacity = func(p *peerConnection) int { return p.BlockCapacity(this.requestRTT()) }
 		setIdle  = func(p *peerConnection, accepted int) { p.SetBodiesIdle(accepted) }
 	)
 	err := this.fetchParts(errCancelBodyFetch, this.bodyCh, deliver, this.bodyWakeCh, expire,
-		this.sch.PendingBlocks, this.sch.InFlightBlocks, this.sch.ShouldThrottleBlocks, this.sch.ReserveBodies,
-		this.bodyFetchHook, fetch, this.sch.CancelBodies, capacity, this.peers.BodyIdlePeers, setIdle, "bodies")
+		this.syncer.sch.PendingBlocks, this.syncer.sch.InFlightBlocks, this.syncer.sch.ShouldThrottleBlocks, this.syncer.sch.ReserveBodies,
+		this.bodyFetchHook, fetch, this.syncer.sch.CancelBodies, capacity, this.syncer.peers.BodyIdlePeers, setIdle, "bodies")
 
 	log.Debug("Block body sync terminated", "err", err)
 	return err
@@ -849,16 +703,16 @@ func (this *fullSync) fetchReceipts(from uint64) error {
 	var (
 		deliver = func(packet dataPack) (int, error) {
 			pack := packet.(*receiptPack)
-			return this.sch.DeliverReceipts(pack.peerId, pack.receipts)
+			return this.syncer.sch.DeliverReceipts(pack.peerId, pack.receipts)
 		}
-		expire   = func() map[string]int { return this.sch.ExpireReceipts(this.requestTTL()) }
+		expire   = func() map[string]int { return this.syncer.sch.ExpireReceipts(this.syncer.requestTTL()) }
 		fetch    = func(p *peerConnection, req *fetchRequest) error { return p.FetchReceipts(req) }
 		capacity = func(p *peerConnection) int { return p.ReceiptCapacity(this.requestRTT()) }
 		setIdle  = func(p *peerConnection, accepted int) { p.SetReceiptsIdle(accepted) }
 	)
 	err := this.fetchParts(errCancelReceiptFetch, this.receiptCh, deliver, this.receiptWakeCh, expire,
-		this.sch.PendingReceipts, this.sch.InFlightReceipts, this.sch.ShouldThrottleReceipts, this.sch.ReserveReceipts,
-		this.receiptFetchHook, fetch, this.sch.CancelReceipts, capacity, this.peers.ReceiptIdlePeers, setIdle, "receipts")
+		this.syncer.sch.PendingReceipts, this.syncer.sch.InFlightReceipts, this.syncer.sch.ShouldThrottleReceipts, this.syncer.sch.ReserveReceipts,
+		this.receiptFetchHook, fetch, this.syncer.sch.CancelReceipts, capacity, this.syncer.peers.ReceiptIdlePeers, setIdle, "receipts")
 
 	log.Debug("Transaction receipt sync terminated", "err", err)
 	return err
@@ -910,7 +764,7 @@ func (this *fullSync) fetchParts(errCancel error, deliveryCh chan dataPack, deli
 		case packet := <-deliveryCh:
 			// If the peer was previously banned and failed to deliver it's pack
 			// in a reasonable time frame, ignore it's message.
-			if peer := this.peers.Peer(packet.PeerId()); peer != nil {
+			if peer := this.syncer.peers.Peer(packet.PeerId()); peer != nil {
 				// Deliver the received chunk of data and check chain validity
 				accepted, err := deliver(packet)
 				if err == errInvalidChain {
@@ -958,12 +812,12 @@ func (this *fullSync) fetchParts(errCancel error, deliveryCh chan dataPack, deli
 
 		case <-update:
 			// Short circuit if we lost all our peers
-			if this.peers.Len() == 0 {
+			if this.syncer.peers.Len() == 0 {
 				return errNoPeers
 			}
 			// Check for fetch request timeouts and demote the responsible peers
 			for pid, fails := range expire() {
-				if peer := this.peers.Peer(pid); peer != nil {
+				if peer := this.syncer.peers.Peer(pid); peer != nil {
 					// If a lot of retrieval elements expired, we might have overestimated the remote peer or perhaps
 					// ourselves. Only reset to minimal throughput but don't drop just yet. If even the minimal times
 					// out that sync wise we need to get rid of the peer.
@@ -976,7 +830,7 @@ func (this *fullSync) fetchParts(errCancel error, deliveryCh chan dataPack, deli
 						setIdle(peer, 0)
 					} else {
 						peer.log.Debug("Stalling delivery, dropping", "type", kind)
-						this.dropPeer(pid)
+						this.syncer.dropPeer(pid)
 					}
 				}
 			}
@@ -1050,7 +904,7 @@ func (this *fullSync) fetchParts(errCancel error, deliveryCh chan dataPack, deli
 // sch until the stream ends or a failure occurs.
 func (this *fullSync) processHeaders(origin uint64, td *big.Int) error {
 	// Calculate the pivoting point for switching from fast to slow sync
-	pivot := this.sch.FastSyncPivot()
+	pivot := this.syncer.sch.FastSyncPivot()
 
 	// Keep a count of uncertain headers to roll back
 	rollback := []*types.Header{}
@@ -1061,26 +915,22 @@ func (this *fullSync) processHeaders(origin uint64, td *big.Int) error {
 			for i, header := range rollback {
 				hashes[i] = header.Hash()
 			}
-			lastHeader, lastFastBlock, lastBlock := this.lightchain.CurrentHeader().Number, common.Big0, common.Big0
-			if this.mode != LightSync {
-				lastFastBlock = core.InstanceBlockChain().CurrentFastBlock().Number()
-				lastBlock = core.InstanceBlockChain().CurrentBlock().Number()
-			}
-			this.lightchain.Rollback(hashes)
+			lastHeader, lastFastBlock, lastBlock := this.syncer.lightchain.CurrentHeader().Number, common.Big0, common.Big0
+			lastFastBlock = core.InstanceBlockChain().CurrentFastBlock().Number()
+			lastBlock = core.InstanceBlockChain().CurrentBlock().Number()
+			this.syncer.lightchain.Rollback(hashes)
 			curFastBlock, curBlock := common.Big0, common.Big0
-			if this.mode != LightSync {
-				curFastBlock = core.InstanceBlockChain().CurrentFastBlock().Number()
-				curBlock = core.InstanceBlockChain().CurrentBlock().Number()
-			}
+			curFastBlock = core.InstanceBlockChain().CurrentFastBlock().Number()
+			curBlock = core.InstanceBlockChain().CurrentBlock().Number()
 			log.Warn("Rolled back headers", "count", len(hashes),
-				"header", fmt.Sprintf("%d->%d", lastHeader, this.lightchain.CurrentHeader().Number),
+				"header", fmt.Sprintf("%d->%d", lastHeader, this.syncer.lightchain.CurrentHeader().Number),
 				"fast", fmt.Sprintf("%d->%d", lastFastBlock, curFastBlock),
 				"block", fmt.Sprintf("%d->%d", lastBlock, curBlock))
 
 			// If we're already past the pivot point, this could be an attack, thread carefully
 			if rollback[len(rollback)-1].Number.Uint64() > pivot {
 				// If we didn't ever fail, lock in the pivot header (must! not! change!)
-				if atomic.LoadUint32(&this.fsPivotFails) == 0 {
+				if atomic.LoadUint32(&this.syncer.fsPivotFails) == 0 {
 					for _, header := range rollback {
 						if header.Number.Uint64() == pivot {
 							log.Warn("Fast-sync pivot locked in", "number", pivot, "hash", header.Hash())
@@ -1122,22 +972,8 @@ func (this *fullSync) processHeaders(origin uint64, td *big.Int) error {
 				// L: Sync begins, and finds common ancestor at 11
 				// L: Request new headers up from 11 (R's TD was higher, it must have something)
 				// R: Nothing to give
-				if this.mode != LightSync {
-					if !gotHeaders && td.Cmp(core.InstanceBlockChain().GetTdByHash(core.InstanceBlockChain().CurrentBlock().Hash())) > 0 {
-						return errStallingPeer
-					}
-				}
-				// If fast or light syncing, ensure promised headers are indeed delivered. This is
-				// needed to detect scenarios where an attacker feeds a bad pivot and then bails out
-				// of delivering the post-pivot blocks that would flag the invalid content.
-				//
-				// This check cannot be executed "as is" for full imports, since blocks may still be
-				// schd for processing when the header sync completes. However, as long as the
-				// peer gave us something useful, we're already happy/progressed (above check).
-				if this.mode == FastSync || this.mode == LightSync {
-					if td.Cmp(this.lightchain.GetTdByHash(this.lightchain.CurrentHeader().Hash())) > 0 {
-						return errStallingPeer
-					}
+				if !gotHeaders && td.Cmp(core.InstanceBlockChain().GetTdByHash(core.InstanceBlockChain().CurrentBlock().Hash())) > 0 {
+					return errStallingPeer
 				}
 				// Disable any rollback and return
 				rollback = nil
@@ -1159,58 +995,20 @@ func (this *fullSync) processHeaders(origin uint64, td *big.Int) error {
 					limit = len(headers)
 				}
 				chunk := headers[:limit]
-
-				// In case of header only syncing, validate the chunk immediately
-				if this.mode == FastSync || this.mode == LightSync {
-					// Collect the yet unknown headers to mark them as uncertain
-					unknown := make([]*types.Header, 0, len(headers))
-					for _, header := range chunk {
-						if !this.lightchain.HasHeader(header.Hash(), header.Number.Uint64()) {
-							unknown = append(unknown, header)
-						}
-					}
-					// If we're importing pure headers, verify based on their recentness
-					frequency := fsHeaderCheckFrequency
-					if chunk[len(chunk)-1].Number.Uint64()+uint64(fsHeaderForceVerify) > pivot {
-						frequency = 1
-					}
-					if n, err := this.lightchain.InsertHeaderChain(chunk, frequency); err != nil {
-						// If some headers were inserted, add them too to the rollback list
-						if n > 0 {
-							rollback = append(rollback, chunk[:n]...)
-						}
-						log.Debug("Invalid header encountered", "number", chunk[n].Number, "hash", chunk[n].Hash(), "err", err)
-						return errInvalidChain
-					}
-					// All verifications passed, store newly found uncertain headers
-					rollback = append(rollback, unknown...)
-					if len(rollback) > fsHeaderSafetyNet {
-						rollback = append(rollback[:0], rollback[len(rollback)-fsHeaderSafetyNet:]...)
-					}
-				}
-				// If we're fast syncing and just pulled in the pivot, make sure it's the one locked in
-				if this.mode == FastSync && this.fsPivotLock != nil && chunk[0].Number.Uint64() <= pivot && chunk[len(chunk)-1].Number.Uint64() >= pivot {
-					if pivot := chunk[int(pivot-chunk[0].Number.Uint64())]; pivot.Hash() != this.fsPivotLock.Hash() {
-						log.Warn("Pivot doesn't match locked in one", "remoteNumber", pivot.Number, "remoteHash", pivot.Hash(), "localNumber", this.fsPivotLock.Number, "localHash", this.fsPivotLock.Hash())
-						return errInvalidChain
-					}
-				}
 				// Unless we're doing light chains, schedule the headers for associated content retrieval
-				if this.mode == FullSync || this.mode == FastSync {
-					// If we've reached the allowed number of pending headers, stall a bit
-					for this.sch.PendingBlocks() >= maxQueuedHeaders || this.sch.PendingReceipts() >= maxQueuedHeaders {
-						select {
-						case <-this.cancelCh:
-							return errCancelHeaderProcessing
-						case <-time.After(time.Second):
-						}
+				// If we've reached the allowed number of pending headers, stall a bit
+				for this.syncer.sch.PendingBlocks() >= maxQueuedHeaders || this.syncer.sch.PendingReceipts() >= maxQueuedHeaders {
+					select {
+					case <-this.cancelCh:
+						return errCancelHeaderProcessing
+					case <-time.After(time.Second):
 					}
-					// Otherwise insert the headers for content retrieval
-					inserts := this.sch.Schedule(chunk, origin)
-					if len(inserts) != len(chunk) {
-						log.Debug("Stale headers")
-						return errBadPeer
-					}
+				}
+				// Otherwise insert the headers for content retrieval
+				inserts := this.syncer.sch.Schedule(chunk, origin)
+				if len(inserts) != len(chunk) {
+					log.Debug("Stale headers")
+					return errBadPeer
 				}
 				headers = headers[limit:]
 				origin += uint64(limit)
@@ -1229,7 +1027,7 @@ func (this *fullSync) processHeaders(origin uint64, td *big.Int) error {
 // processFullSyncContent takes fetch results from the sch and imports them into the chain.
 func (this *fullSync) processFullSyncContent() error {
 	for {
-		results := this.sch.WaitResults()
+		results := this.syncer.sch.WaitResults()
 		if len(results) == 0 {
 			return nil
 		}
@@ -1246,7 +1044,7 @@ func (this *fullSync) importBlockResults(results []*fetchResult) error {
 	for len(results) != 0 {
 		// Check for any termination requests. This makes clean shutdown faster.
 		select {
-		case <-this.quitCh:
+		case <-this.syncer.quitCh:
 			return errCancelContentProcessing
 		default:
 		}
@@ -1269,93 +1067,6 @@ func (this *fullSync) importBlockResults(results []*fetchResult) error {
 		results = results[items:]
 	}
 	return nil
-}
-
-// processFastSyncContent takes fetch results from the sch and writes them to the
-// database. It also controls the synchronisation of state nodes of the pivot block.
-func (this *fullSync) processFastSyncContent(latest *types.Header) error {
-	// Start syncing state of the reported head block.
-	// This should get us most of the state of the pivot block.
-	stateSync := this.syncState(latest.Root)
-	defer stateSync.Cancel()
-	go func() {
-		if err := stateSync.Wait(); err != nil {
-			this.sch.Close() // wake up WaitResults
-		}
-	}()
-
-	pivot := this.sch.FastSyncPivot()
-	for {
-		results := this.sch.WaitResults()
-		if len(results) == 0 {
-			return stateSync.Cancel()
-		}
-		if this.chainInsertHook != nil {
-			this.chainInsertHook(results)
-		}
-		P, beforeP, afterP := splitAroundPivot(pivot, results)
-		if err := this.commitFastSyncData(beforeP, stateSync); err != nil {
-			return err
-		}
-		if P != nil {
-			stateSync.Cancel()
-			if err := this.commitPivotBlock(P); err != nil {
-				return err
-			}
-		}
-		if err := this.importBlockResults(afterP); err != nil {
-			return err
-		}
-	}
-}
-
-func (this *fullSync) commitFastSyncData(results []*fetchResult, stateSync *stateSync) error {
-	for len(results) != 0 {
-		// Check for any termination requests.
-		select {
-		case <-this.quitCh:
-			return errCancelContentProcessing
-		case <-stateSync.done:
-			if err := stateSync.Wait(); err != nil {
-				return err
-			}
-		default:
-		}
-		// Retrieve the a batch of results to import
-		items := int(math.Min(float64(len(results)), float64(maxResultsProcess)))
-		first, last := results[0].Header, results[items-1].Header
-		log.Debug("Inserting fast-sync blocks", "items", len(results),
-			"firstnum", first.Number, "firsthash", first.Hash(),
-			"lastnumn", last.Number, "lasthash", last.Hash(),
-		)
-		blocks := make([]*types.Block, items)
-		receipts := make([]types.Receipts, items)
-		for i, result := range results[:items] {
-			blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
-			receipts[i] = result.Receipts
-		}
-		if index, err := core.InstanceBlockChain().InsertReceiptChain(blocks, receipts); err != nil {
-			log.Debug("synced item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
-			return errInvalidChain
-		}
-		// Shift the results to the next batch
-		results = results[items:]
-	}
-	return nil
-}
-
-func (this *fullSync) commitPivotBlock(result *fetchResult) error {
-	b := types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
-	// Sync the pivot block state. This should complete reasonably quickly because
-	// we've already synced up to the reported head block state earlier.
-	if err := this.syncState(b.Root()).Wait(); err != nil {
-		return err
-	}
-	log.Debug("Committing fast sync pivot as new head", "number", b.Number(), "hash", b.Hash())
-	if _, err := core.InstanceBlockChain().InsertReceiptChain([]*types.Block{b}, []types.Receipts{result.Receipts}); err != nil {
-		return err
-	}
-	return core.InstanceBlockChain().FastSyncCommitHead(b.Hash())
 }
 
 // deliver injects a new batch of data received from a remote node.
@@ -1382,40 +1093,17 @@ func (this *fullSync) deliver(id string, destCh chan dataPack, packet dataPack, 
 	}
 }
 
-// qosTuner is the quality of service tuning loop that occasionally gathers the
-// peer latency statistics and updates the estimated request round trip time.
-func (this *fullSync) qosTuner() {
-	for {
-		// Retrieve the current median RTT and integrate into the previoust target RTT
-		rtt := time.Duration(float64(1-qosTuningImpact)*float64(atomic.LoadUint64(&this.rttEstimate)) + qosTuningImpact*float64(this.peers.medianRTT()))
-		atomic.StoreUint64(&this.rttEstimate, uint64(rtt))
-
-		// A new RTT cycle passed, increase our confidence in the estimated RTT
-		conf := atomic.LoadUint64(&this.rttConfidence)
-		conf = conf + (1000000-conf)/2
-		atomic.StoreUint64(&this.rttConfidence, conf)
-
-		// Log the new QoS values and sleep until the next RTT
-		log.Debug("Recalculated syncer QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
-		select {
-		case <-this.quitCh:
-			return
-		case <-time.After(rtt):
-		}
-	}
-}
-
 // qosReduceConfidence is meant to be called when a new peer joins the syncer's
 // peer set, needing to reduce the confidence we have in out QoS estimates.
 func (this *fullSync) qosReduceConfidence() {
 	// If we have a single peer, confidence is always 1
-	peers := uint64(this.peers.Len())
+	peers := uint64(this.syncer.peers.Len())
 	if peers == 0 {
 		// Ensure peer connectivity races don't catch us off guard
 		return
 	}
 	if peers == 1 {
-		atomic.StoreUint64(&this.rttConfidence, 1000000)
+		atomic.StoreUint64(&this.syncer.rttConfidence, 1000000)
 		return
 	}
 	// If we have a ton of peers, don't drop confidence)
@@ -1423,14 +1111,14 @@ func (this *fullSync) qosReduceConfidence() {
 		return
 	}
 	// Otherwise drop the confidence factor
-	conf := atomic.LoadUint64(&this.rttConfidence) * (peers - 1) / peers
+	conf := atomic.LoadUint64(&this.syncer.rttConfidence) * (peers - 1) / peers
 	if float64(conf)/1000000 < rttMinConfidence {
 		conf = uint64(rttMinConfidence * 1000000)
 	}
-	atomic.StoreUint64(&this.rttConfidence, conf)
+	atomic.StoreUint64(&this.syncer.rttConfidence, conf)
 
-	rtt := time.Duration(atomic.LoadUint64(&this.rttEstimate))
-	log.Debug("Relaxed syncer QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
+	rtt := time.Duration(atomic.LoadUint64(&this.syncer.rttEstimate))
+	log.Debug("Relaxed syncer QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.syncer.requestTTL())
 }
 
 // requestRTT returns the current target round trip time for a sync request
@@ -1440,169 +1128,5 @@ func (this *fullSync) qosReduceConfidence() {
 // the syncer tries to adapt queries to the RTT, so multiple RTT values can
 // be adapted to, but smaller ones are preffered (stabler sync stream).
 func (this *fullSync) requestRTT() time.Duration {
-	return time.Duration(atomic.LoadUint64(&this.rttEstimate)) * 9 / 10
-}
-
-// requestTTL returns the current timeout allowance for a single sync request
-// to finish under.
-func (this *fullSync) requestTTL() time.Duration {
-	var (
-		rtt  = time.Duration(atomic.LoadUint64(&this.rttEstimate))
-		conf = float64(atomic.LoadUint64(&this.rttConfidence)) / 1000000.0
-	)
-	ttl := time.Duration(ttlScaling) * time.Duration(float64(rtt)/conf)
-	if ttl > ttlLimit {
-		ttl = ttlLimit
-	}
-	return ttl
-}
-
-
-// syncState starts syncing state with the given root hash.
-func (this *fullSync) syncState(root common.Hash) *stateSync {
-	s := newStateSync(this, root)
-	select {
-	case this.stateSyncStart <- s:
-	case <-this.quitCh:
-		s.err = errCancelStateFetch
-		close(s.done)
-	}
-	return s
-}
-
-// stateFetcher manages the active state sync and accepts requests
-// on its behalf.
-func (this *fullSync) stateFetcher() {
-	for {
-		select {
-		case s := <-this.stateSyncStart:
-			for next := s; next != nil; {
-				next = this.runStateSync(next)
-			}
-		case <-this.stateCh:
-			// Ignore state responses while no sync is running.
-		case <-this.quitCh:
-			return
-		}
-	}
-}
-
-// runStateSync runs a state synchronisation until it completes or another root
-// hash is requested to be switched over to.
-func (this *fullSync) runStateSync(s *stateSync) *stateSync {
-	var (
-		active   = make(map[string]*stateReq) // Currently in-flight requests
-		finished []*stateReq                  // Completed or failed requests
-		timeout  = make(chan *stateReq)       // Timed out active requests
-	)
-	defer func() {
-		// Cancel active request timers on exit. Also set peers to idle so they're
-		// available for the next sync.
-		for _, req := range active {
-			req.timer.Stop()
-			req.peer.SetNodeDataIdle(len(req.items))
-		}
-	}()
-	// Run the state sync.
-	go s.run()
-	defer s.Cancel()
-
-	// Listen for peer departure events to cancel assigned tasks
-	peerDrop := make(chan *peerConnection, 1024)
-	peerSub := s.syn.sch.SubscribePeerDrops(peerDrop)
-	defer peerSub.Unsubscribe()
-
-	for {
-		// Enable sending of the first buffered element if there is one.
-		var (
-			deliverReq   *stateReq
-			deliverReqCh chan *stateReq
-		)
-		if len(finished) > 0 {
-			deliverReq = finished[0]
-			deliverReqCh = s.deliver
-		}
-
-		select {
-		// The stateSync lifecycle:
-		case next := <-this.stateSyncStart:
-			return next
-
-		case <-s.done:
-			return nil
-
-			// Send the next finished request to the current sync:
-		case deliverReqCh <- deliverReq:
-			finished = append(finished[:0], finished[1:]...)
-
-			// Handle incoming state packs:
-		case pack := <-this.stateCh:
-			// Discard any data not requested (or previsouly timed out)
-			req := active[pack.PeerId()]
-			if req == nil {
-				log.Debug("Unrequested node data", "peer", pack.PeerId(), "len", pack.Items())
-				continue
-			}
-			// Finalize the request and queue up for processing
-			req.timer.Stop()
-			req.response = pack.(*statePack).states
-
-			finished = append(finished, req)
-			delete(active, pack.PeerId())
-
-			// Handle dropped peer connections:
-		case p := <-peerDrop:
-			// Skip if no request is currently pending
-			req := active[p.id]
-			if req == nil {
-				continue
-			}
-			// Finalize the request and queue up for processing
-			req.timer.Stop()
-			req.dropped = true
-
-			finished = append(finished, req)
-			delete(active, p.id)
-
-			// Handle timed-out requests:
-		case req := <-timeout:
-			// If the peer is already requesting something else, ignore the stale timeout.
-			// This can happen when the timeout and the delivery happens simultaneously,
-			// causing both pathways to trigger.
-			if active[req.peer.id] != req {
-				continue
-			}
-			// Move the timed out data back into the sync queue
-			finished = append(finished, req)
-			delete(active, req.peer.id)
-
-			// Track outgoing state requests:
-		case req := <-this.trackStateReq:
-			// If an active request already exists for this peer, we have a problem. In
-			// theory the trie node schedule must never assign two requests to the same
-			// peer. In practive however, a peer might receive a request, disconnect and
-			// immediately reconnect before the previous times out. In this case the first
-			// request is never honored, alas we must not silently overwrite it, as that
-			// causes valid requests to go missing and sync to get stuck.
-			if old := active[req.peer.id]; old != nil {
-				log.Warn("Busy peer assigned new state fetch", "peer", old.peer.id)
-
-				// Make sure the previous one doesn't get siletly lost
-				old.timer.Stop()
-				old.dropped = true
-
-				finished = append(finished, old)
-			}
-			// Start a timer to notify the sync loop if the peer stalled.
-			req.timer = time.AfterFunc(req.timeout, func() {
-				select {
-				case timeout <- req:
-				case <-s.done:
-					// Prevent leaking of timer goroutines in the unlikely case where a
-					// timer is fired just before exiting runStateSync.
-				}
-			})
-			active[req.peer.id] = req
-		}
-	}
+	return time.Duration(atomic.LoadUint64(&this.syncer.rttEstimate)) * 9 / 10
 }

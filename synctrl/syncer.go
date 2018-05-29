@@ -24,9 +24,11 @@ import (
 	"github.com/hpb-project/go-hpb/blockchain/types"
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/constant"
+	"github.com/hpb-project/go-hpb/common/log"
 	hpbinter "github.com/hpb-project/go-hpb/interface"
 	"github.com/hpb-project/go-hpb/storage"
 	"math/big"
+	"sync/atomic"
 	"time"
 )
 
@@ -142,11 +144,10 @@ type syncStrategy interface {
 	deliverReceipts(id string, receipts [][]*types.Receipt) (err error)
 	deliverNodeData(id string, data [][]byte) (err error)
 
-	start(id string, head common.Hash, td *big.Int, mode SyncMode) error
+	syncWithPeer(id string, p *peerConnection, hash common.Hash, td *big.Int) (err error)
 	cancel()
 	terminate()
 	progress() hpbinter.SyncProgress
-	syning() bool
 
 	registerPeer(id string, version uint, peer Peer) error
 	registerLightPeer(id string, version uint, peer LightPeer) error
@@ -155,7 +156,29 @@ type syncStrategy interface {
 type Syncer struct {
 	mode         SyncMode       // Synchronisation mode defining the strategy used (per sync cycle)
 	strategy     syncStrategy
-	fsPivotFails uint32
+
+	mux     *event.TypeMux // Event multiplexer to announce sync operation events
+	stateDB hpbdb.Database
+	lightchain LightChain
+
+	peers   *peerSet // Set of active peers from which sync can proceed
+	dropPeer peerDropFn // Drops a peer for misbehaving
+	sch     *scheduler   // Scheduler for selecting the hashes to sync
+
+	rttEstimate   uint64 // Round trip time to target for sync requests
+	rttConfidence uint64 // Confidence in the estimated RTT (unit: millionths to allow atomic ops)
+
+	// for stateFetcher
+	stateSyncStart chan *stateSync
+	trackStateReq  chan *stateReq
+	stateCh        chan dataPack // Channel receiving inbound node state data
+	// Status
+	synchroniseMock func(id string, hash common.Hash) error // Replacement for synchronise during testing
+	synchronising   int32
+	notified        int32
+	fsPivotFails uint32        // Number of subsequent fast sync failures in the critical section
+
+	quitCh   chan struct{} // Quit channel to signal termination
 }
 
 func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightchain LightChain,
@@ -165,24 +188,89 @@ func NewSyncer(mode SyncMode, stateDb hpbdb.Database, mux *event.TypeMux, lightc
 	}
 	syn := &Syncer{
 		mode:           mode,
+		stateDB:        stateDb,
+		mux:            mux,
+		lightchain:     lightchain,
+		peers:          newPeerSet(),
+		dropPeer:       dropPeer,
+		sch:            newScheduler(),
+		rttEstimate:    uint64(rttMaxEstimate),
+		rttConfidence:  uint64(1000000),
+		quitCh:         make(chan struct{}),
+		stateCh:        make(chan dataPack),
+		stateSyncStart: make(chan *stateSync),
+		trackStateReq:  make(chan *stateReq),
 	}
 	switch mode {
 	case FullSync:
-		syn.strategy = newFullsync(syn, stateDb, mux, lightchain, dropPeer)
+		syn.strategy = newFullsync(syn)
 	case FastSync:
-		syn.strategy = newFastsync(syn, stateDb, mux, lightchain, dropPeer)
+		syn.strategy = newFastsync(syn)
 	case LightSync:
-		syn.strategy = newLightsync(syn, stateDb, mux, lightchain, dropPeer)
+		syn.strategy = newLightsync(syn)
 	default:
 		syn.strategy = nil
 	}
+
+	go syn.qosTuner()
+	go syn.stateFetcher()
+
 	return syn
 }
 
 // Start tries to sync up our local block chain with a remote peer, both
 // adding various sanity checks as well as wrapping it with various log entries.
 func (this *Syncer) Start(id string, head common.Hash, td *big.Int, mode SyncMode) error {
-	return this.strategy.start(id, head, td, mode)
+	err := this.syn(id, head, td, mode)
+	switch err {
+	case nil:
+	case errBusy:
+
+	case errTimeout, errBadPeer, errStallingPeer,
+		errEmptyHeaderSet, errPeersUnavailable, errProVLowerBase,
+		errInvalidAncestor, errInvalidChain:
+		log.Warn("Synchronisation failed, dropping peer", "peer", id, "err", err)
+		this.dropPeer(id)
+
+	default:
+		log.Warn("Synchronisation failed, retrying", "err", err)
+	}
+	return err
+}
+
+// syn will select the peer and use it for synchronising. If an empty string is given
+// it will use the best peer possible and synchronize if it's TD is higher than our own. If any of the
+// checks fail an error will be returned. This method is synchronous
+func (this *Syncer) syn(id string, hash common.Hash, td *big.Int, mode SyncMode) error {
+	// Mock out the synchronisation if testing
+	if this.synchroniseMock != nil {
+		return this.synchroniseMock(id, hash)
+	}
+	// Make sure only one goroutine is ever allowed past this point at once
+	if !atomic.CompareAndSwapInt32(&this.synchronising, 0, 1) {
+		return errBusy
+	}
+	defer atomic.StoreInt32(&this.synchronising, 0)
+
+	// Post a user notification of the sync (only once per session)
+	if atomic.CompareAndSwapInt32(&this.notified, 0, 1) {
+		log.Info("Block synchronisation started")
+	}
+	// Reset the sch, peer set and wake channels to clean any internal leftover state
+	this.sch.Reset()
+	this.peers.Reset()
+
+	// Set the requested sync mode, unless it's forbidden
+	this.mode = mode
+	if this.mode == FastSync && atomic.LoadUint32(&this.fsPivotFails) >= fsCriticalTrials {
+		this.strategy = newFullsync(this)
+	}
+	// Retrieve the origin peer and initiate the syncing process
+	p := this.peers.Peer(id)
+	if p == nil {
+		return errUnknownPeer
+	}
+	return this.strategy.syncWithPeer(id, p, hash, td)
 }
 
 // Terminate interrupts the syn, canceling all pending operations.
@@ -193,7 +281,7 @@ func (this *Syncer) Terminate() {
 
 // Synchronising returns whether the syn is currently retrieving blocks.
 func (this *Syncer) Synchronising() bool {
-	return this.strategy.syning()
+	return atomic.LoadInt32(&this.synchronising) > 0
 }
 
 // RegisterPeer injects a new syn peer into the set of block source to be
@@ -239,4 +327,179 @@ func (this *Syncer) DeliverReceipts(id string, receipts [][]*types.Receipt) (err
 // DeliverNodeData injects a new batch of node state data received from a remote node.
 func (this *Syncer) DeliverNodeData(id string, data [][]byte) (err error) {
 	return this.strategy.deliverNodeData(id, data)
+}
+
+
+// qosTuner is the quality of service tuning loop that occasionally gathers the
+// peer latency statistics and updates the estimated request round trip time.
+func (this *Syncer) qosTuner() {
+	for {
+		// Retrieve the current median RTT and integrate into the previoust target RTT
+		rtt := time.Duration(float64(1-qosTuningImpact)*float64(atomic.LoadUint64(&this.rttEstimate)) + qosTuningImpact*float64(this.peers.medianRTT()))
+		atomic.StoreUint64(&this.rttEstimate, uint64(rtt))
+
+		// A new RTT cycle passed, increase our confidence in the estimated RTT
+		conf := atomic.LoadUint64(&this.rttConfidence)
+		conf = conf + (1000000-conf)/2
+		atomic.StoreUint64(&this.rttConfidence, conf)
+
+		// Log the new QoS values and sleep until the next RTT
+		log.Debug("Recalculated syncer QoS values", "rtt", rtt, "confidence", float64(conf)/1000000.0, "ttl", this.requestTTL())
+		select {
+		case <-this.quitCh:
+			return
+		case <-time.After(rtt):
+		}
+	}
+}
+
+// requestTTL returns the current timeout allowance for a single sync request
+// to finish under.
+func (this *Syncer) requestTTL() time.Duration {
+	var (
+		rtt  = time.Duration(atomic.LoadUint64(&this.rttEstimate))
+		conf = float64(atomic.LoadUint64(&this.rttConfidence)) / 1000000.0
+	)
+	ttl := time.Duration(ttlScaling) * time.Duration(float64(rtt)/conf)
+	if ttl > ttlLimit {
+		ttl = ttlLimit
+	}
+	return ttl
+}
+
+// stateFetcher manages the active state sync and accepts requests
+// on its behalf.
+func (this *Syncer) stateFetcher() {
+	for {
+		select {
+		case s := <-this.stateSyncStart:
+			for next := s; next != nil; {
+				next = this.runStateSync(next)
+			}
+		case <-this.stateCh:
+			// Ignore state responses while no sync is running.
+		case <-this.quitCh:
+			return
+		}
+	}
+}
+
+// runStateSync runs a state synchronisation until it completes or another root
+// hash is requested to be switched over to.
+func (this *Syncer) runStateSync(s *stateSync) *stateSync {
+	var (
+		active   = make(map[string]*stateReq) // Currently in-flight requests
+		finished []*stateReq                  // Completed or failed requests
+		timeout  = make(chan *stateReq)       // Timed out active requests
+	)
+	defer func() {
+		// Cancel active request timers on exit. Also set peers to idle so they're
+		// available for the next sync.
+		for _, req := range active {
+			req.timer.Stop()
+			req.peer.SetNodeDataIdle(len(req.items))
+		}
+	}()
+	// Run the state sync.
+	go s.run()
+	defer s.Cancel()
+
+	// Listen for peer departure events to cancel assigned tasks
+	peerDrop := make(chan *peerConnection, 1024)
+	peerSub := s.syn.peers.SubscribePeerDrops(peerDrop)
+	defer peerSub.Unsubscribe()
+
+	for {
+		// Enable sending of the first buffered element if there is one.
+		var (
+			deliverReq   *stateReq
+			deliverReqCh chan *stateReq
+		)
+		if len(finished) > 0 {
+			deliverReq = finished[0]
+			deliverReqCh = s.deliver
+		}
+
+		select {
+		// The stateSync lifecycle:
+		case next := <-this.stateSyncStart:
+			return next
+
+		case <-s.done:
+			return nil
+
+			// Send the next finished request to the current sync:
+		case deliverReqCh <- deliverReq:
+			finished = append(finished[:0], finished[1:]...)
+
+			// Handle incoming state packs:
+		case pack := <-this.stateCh:
+			// Discard any data not requested (or previsouly timed out)
+			req := active[pack.PeerId()]
+			if req == nil {
+				log.Debug("Unrequested node data", "peer", pack.PeerId(), "len", pack.Items())
+				continue
+			}
+			// Finalize the request and queue up for processing
+			req.timer.Stop()
+			req.response = pack.(*statePack).states
+
+			finished = append(finished, req)
+			delete(active, pack.PeerId())
+
+			// Handle dropped peer connections:
+		case p := <-peerDrop:
+			// Skip if no request is currently pending
+			req := active[p.id]
+			if req == nil {
+				continue
+			}
+			// Finalize the request and queue up for processing
+			req.timer.Stop()
+			req.dropped = true
+
+			finished = append(finished, req)
+			delete(active, p.id)
+
+			// Handle timed-out requests:
+		case req := <-timeout:
+			// If the peer is already requesting something else, ignore the stale timeout.
+			// This can happen when the timeout and the delivery happens simultaneously,
+			// causing both pathways to trigger.
+			if active[req.peer.id] != req {
+				continue
+			}
+			// Move the timed out data back into the light sync queue
+			finished = append(finished, req)
+			delete(active, req.peer.id)
+
+			// Track outgoing state requests:
+		case req := <-this.trackStateReq:
+			// If an active request already exists for this peer, we have a problem. In
+			// theory the trie node schedule must never assign two requests to the same
+			// peer. In practive however, a peer might receive a request, disconnect and
+			// immediately reconnect before the previous times out. In this case the first
+			// request is never honored, alas we must not silently overwrite it, as that
+			// causes valid requests to go missing and sync to get stuck.
+			if old := active[req.peer.id]; old != nil {
+				log.Warn("Busy peer assigned new state fetch", "peer", old.peer.id)
+
+				// Make sure the previous one doesn't get siletly lost
+				old.timer.Stop()
+				old.dropped = true
+
+				finished = append(finished, old)
+			}
+			// Start a timer to notify the sync loop if the peer stalled.
+			req.timer = time.AfterFunc(req.timeout, func() {
+				select {
+				case timeout <- req:
+				case <-s.done:
+					// Prevent leaking of timer goroutines in the unlikely case where a
+					// timer is fired just before exiting runStateSync.
+				}
+			})
+			active[req.peer.id] = req
+		}
+	}
 }
