@@ -32,8 +32,6 @@ import (
 type lightSync struct {
 	syncer  *Syncer
 
-	fsPivotLock  *types.Header // Pivot header on critical section entry (cannot change between retries)
-
 	// Channels
 	headerCh      chan dataPack        // Channel receiving inbound block headers
 	bodyCh        chan dataPack        // Channel receiving inbound block bodies
@@ -46,8 +44,6 @@ type lightSync struct {
 	cancelPeer string        // Identifier of the peer currently being used as the master (cancel on drop)
 	cancelCh   chan struct{} // Channel to cancel mid-flight syncs
 	cancelLock sync.RWMutex  // Lock to protect the cancel channel and peer in delivers
-
-	quitLock sync.RWMutex  // Lock to prevent double closes
 
 	// Testing hooks
 	syncInitHook     func(uint64, uint64)  // Method to call upon initiating a new sync run
@@ -104,22 +100,6 @@ func (this *lightSync) cancel() {
 		}
 	}
 	this.cancelLock.Unlock()
-}
-
-// terminate interrupts the light syncer, canceling all pending operations.
-// The light syncer cannot be reused after calling Terminate.
-func (this *lightSync) terminate() {
-	// Close the termination channel (make sure double close is allowed)
-	this.quitLock.Lock()
-	select {
-	case <-this.syncer.quitCh:
-	default:
-		close(this.syncer.quitCh)
-	}
-	this.quitLock.Unlock()
-
-	// Cancel any pending light sync requests
-	this.cancel()
 }
 
 // registerPeer injects a new light sync peer into the set of block source to be
@@ -871,7 +851,6 @@ func (this *lightSync) fetchParts(errCancel error, deliveryCh chan dataPack, del
 // keeps processing and scheduling them into the header chain and light syncer's
 // sch until the stream ends or a failure occurs.
 func (this *lightSync) processHeaders(origin uint64, td *big.Int) error {
-	// Calculate the pivoting point for switching from fast to slow sync
 	pivot := this.syncer.sch.FastSyncPivot()
 
 	// Keep a count of uncertain headers to roll back
@@ -890,19 +869,6 @@ func (this *lightSync) processHeaders(origin uint64, td *big.Int) error {
 				"header", fmt.Sprintf("%d->%d", lastHeader, this.syncer.lightchain.CurrentHeader().Number),
 				"fast", fmt.Sprintf("%d->%d", lastFastBlock, curFastBlock),
 				"block", fmt.Sprintf("%d->%d", lastBlock, curBlock))
-
-			// If we're already past the pivot point, this could be an attack, thread carefully
-			if rollback[len(rollback)-1].Number.Uint64() > pivot {
-				// If we didn't ever fail, lock in the pivot header (must! not! change!)
-				if atomic.LoadUint32(&this.syncer.fsPivotFails) == 0 {
-					for _, header := range rollback {
-						if header.Number.Uint64() == pivot {
-							log.Warn("Fast-sync pivot locked in", "number", pivot, "hash", header.Hash())
-							this.fsPivotLock = header
-						}
-					}
-				}
-			}
 		}
 	}()
 

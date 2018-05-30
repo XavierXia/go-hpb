@@ -147,13 +147,12 @@ type syncStrategy interface {
 
 	syncWithPeer(id string, p *peerConnection, hash common.Hash, td *big.Int) (err error)
 	cancel()
-	terminate()
-	progress() hpbinter.SyncProgress
 
 	registerPeer(id string, version uint, peer Peer) error
 	registerLightPeer(id string, version uint, peer LightPeer) error
 	unregisterPeer(id string) error
 }
+
 type Syncer struct {
 	mode         SyncMode       // Synchronisation mode defining the strategy used (per sync cycle)
 	strategy     syncStrategy
@@ -185,6 +184,7 @@ type Syncer struct {
 	notified        int32
 	fsPivotFails uint32        // Number of subsequent fast sync failures in the critical section
 
+	quitLock sync.RWMutex  // Lock to prevent double closes
 	quitCh   chan struct{} // Quit channel to signal termination
 }
 
@@ -292,6 +292,8 @@ func (this *Syncer) syn(id string, hash common.Hash, td *big.Int, mode SyncMode)
 	// Set the requested sync mode, unless it's forbidden
 	this.mode = mode
 	if this.mode == FastSync && atomic.LoadUint32(&this.fsPivotFails) >= fsCriticalTrials {
+		// stop the previous synchronization strategy
+		this.strategy.cancel()
 		this.strategy = newFullsync(this)
 	}
 	// Retrieve the origin peer and initiate the syncing process
@@ -305,7 +307,17 @@ func (this *Syncer) syn(id string, hash common.Hash, td *big.Int, mode SyncMode)
 // Terminate interrupts the syn, canceling all pending operations.
 // The syncer cannot be reused after calling Terminate.
 func (this *Syncer) Terminate() {
-	this.strategy.terminate()
+	// Close the termination channel (make sure double close is allowed)
+	this.quitLock.Lock()
+	select {
+	case <-this.quitCh:
+	default:
+		close(this.quitCh)
+	}
+	this.quitLock.Unlock()
+
+	// Cancel any pending sync requests
+	this.strategy.cancel()
 }
 
 // Synchronising returns whether the syn is currently retrieving blocks.

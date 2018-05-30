@@ -49,8 +49,6 @@ type fastSync struct {
 	cancelCh   chan struct{} // Channel to cancel mid-flight syncs
 	cancelLock sync.RWMutex  // Lock to protect the cancel channel and peer in delivers
 
-	quitLock sync.RWMutex  // Lock to prevent double closes
-
 	// Testing hooks
 	syncInitHook     func(uint64, uint64)  // Method to call upon initiating a new sync run
 	bodyFetchHook    func([]*types.Header) // Method to call upon starting a block body fetch
@@ -106,22 +104,6 @@ func (this *fastSync) cancel() {
 		}
 	}
 	this.cancelLock.Unlock()
-}
-
-// Terminate interrupts the fast syncer, canceling all pending operations.
-// The fast syncer cannot be reused after calling Terminate.
-func (this *fastSync) terminate() {
-	// Close the termination channel (make sure double close is allowed)
-	this.quitLock.Lock()
-	select {
-	case <-this.syncer.quitCh:
-	default:
-		close(this.syncer.quitCh)
-	}
-	this.quitLock.Unlock()
-
-	// Cancel any pending fast sync requests
-	this.cancel()
 }
 
 // RegisterPeer injects a new fast sync peer into the set of block source to be
