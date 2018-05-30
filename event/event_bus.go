@@ -16,7 +16,7 @@ type Receiver *actor.PID
 
 func RegisterReceiver(name string, fn func(payload interface{})) Receiver {
 	receiver, _ := actor.SpawnNamed(actor.FromFunc(func(context actor.Context) {
-		fn(context)
+		fn(context.Message())
 	}), name)
 	return receiver
 }

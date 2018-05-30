@@ -25,6 +25,7 @@ import (
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/constant"
 	"github.com/hpb-project/ghpb/common/crypto"
+	"reflect"
 )
 
 var (
@@ -61,7 +62,7 @@ func SignTx(tx *Transaction, s Signer, prv *ecdsa.PrivateKey) (*Transaction, err
 // signing method. The cache is invalidated if the cached signer does
 // not match the signer used in the current call.
 func Sender(signer Signer, tx *Transaction) (common.Address, error) {
-	if (tx.from.Load() != nil && tx.from.Load().(common.Address) != common.Address{}) {
+	if (tx.from.Load() != nil && reflect.TypeOf(tx.from.Load()) == reflect.TypeOf(common.Address{}) && tx.from.Load().(common.Address) != common.Address{}) {
 		return tx.from.Load().(common.Address), nil
 	}
 	if sc := tx.from.Load(); sc != nil {

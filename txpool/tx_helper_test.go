@@ -12,7 +12,6 @@ import (
 	"github.com/hpb-project/ghpb/common/crypto"
 	"github.com/hpb-project/ghpb/core/state"
 	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/ghpb/core/event"
 	"github.com/hpb-project/ghpb/common"
 )
 
@@ -29,7 +28,7 @@ func prepare() (*keystore.KeyStore, *TxPool) {
 
 	// setup pool with 2 transaction in it
 	statedb.SetBalance(address, new(big.Int).SetUint64(params.Ether))
-	blockchain := &testChain{&testBlockChain{statedb, big.NewInt(1000000000), new(event.Feed)}, address, &trigger}
+	blockchain := &testChain{&testBlockChain{statedb, big.NewInt(1000000000)}, address, &trigger}
 	pool := NewTxPool(testTxPoolConfig, params.TestnetChainConfig, blockchain)
 	return ks, pool
 }
