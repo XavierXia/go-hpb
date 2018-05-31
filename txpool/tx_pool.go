@@ -383,7 +383,7 @@ func (pool *TxPool) AddTxs(txs []*types.Transaction) error {
 	return pool.addTxsLocked(txs)
 }
 
-// addTxs attempts to queue a batch of transactions if they are valid.
+// AddTx attempts to queue a transactions if valid.
 func (pool *TxPool) AddTx(tx *types.Transaction) error {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()

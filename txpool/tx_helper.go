@@ -130,3 +130,32 @@ func SubmitRawTx(encodedTx hexutil.Bytes) (common.Hash, error) {
 	}
 	return tx.Hash(), nil
 }
+
+//SubmitRawTx try to decode rlp data and submit transaction from remote RPC call into tx_pool and return transaction's hash.
+func SubmitRawTxFromP2P(encodedTx hexutil.Bytes) (common.Hash, error) {
+	//1.decode raw transaction data to Transaction object.
+	tx := new(types.Transaction)
+	if err := rlp.DecodeBytes(encodedTx, tx); err != nil {
+		return common.Hash{}, err
+	}
+	//2.call tx_pool's addTx() push tx into tx_pool.
+	tx.SetFromP2P(true)
+	if err := GetTxPool().AddTx(tx); err != nil {
+		return common.Hash{},err
+	}
+	//3.return the transaction's hash.
+	if tx.To() == nil {
+		//TODO read from blockchain
+		var chainID *big.Int
+		signer := types.NewEIP155Signer(chainID)
+		from, err := types.Sender(signer, tx)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		addr := crypto.CreateAddress(from, tx.Nonce())
+		log.Info("Submitted contract creation", "fullhash", tx.Hash().Hex(), "contract", addr.Hex())
+	} else {
+		log.Info("Submitted transaction", "fullhash", tx.Hash().Hex(), "recipient", tx.To())
+	}
+	return tx.Hash(), nil
+}

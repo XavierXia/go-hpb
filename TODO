@@ -3,3 +3,4 @@
 3.add metrics code for monitor use.
 4.implement bc explorer api.
 5.try to implement neo vm.
+6.fire txpre event unless is remote receive.
