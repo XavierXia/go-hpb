@@ -194,88 +194,30 @@ func (this *SynCtrl) Start() {
 	go this.txsyncLoop()
 }
 
-// txsyncLoop takes care of the initial transaction sync for each new
-// connection. When a new peer appears, we relay all currently pending
-// transactions. In order to minimise egress bandwidth usage, we send
-// the transactions in small packs to one peer at a time.
-func (this *SynCtrl) txsyncLoop() {
-	var (
-		pending = make(map[discover.NodeID]*txsync)
-		sending = false               // whether a send is active
-		pack    = new(txsync)         // the pack that is being sent
-		done    = make(chan error, 1) // result of the send
-	)
-
-	// send starts a sending a pack of transactions from the sync.
-	send := func(s *txsync) {
-		// Fill pack with transactions up to the target size.
-		size := common.StorageSize(0)
-		pack.p = s.p
-		pack.txs = pack.txs[:0]
-		for i := 0; i < len(s.txs) && size < txsyncPackSize; i++ {
-			pack.txs = append(pack.txs, s.txs[i])
-			size += s.txs[i].Size()
-		}
-		// Remove the transactions that will be sent.
-		s.txs = s.txs[:copy(s.txs, s.txs[len(pack.txs):])]
-		if len(s.txs) == 0 {
-			delete(pending, s.p.ID())
-		}
-		// Send the pack in the background.
-		s.p.Log().Trace("Sending batch of transactions", "count", len(pack.txs), "bytes", size)
-		sending = true
-		go func() { done <- pack.p.SendTransactions(pack.txs) }()
-	}
-
-	// pick chooses the next pending sync.
-	pick := func() *txsync {
-		if len(pending) == 0 {
-			return nil
-		}
-		n := rand.Intn(len(pending)) + 1
-		for _, s := range pending {
-			if n--; n == 0 {
-				return s
-			}
-		}
-		return nil
-	}
-
-	for {
-		select {
-		case s := <-this.txsyncCh:
-			pending[s.p.ID()] = s
-			if !sending {
-				send(s)
-			}
-		case err := <-done:
-			sending = false
-			// Stop tracking peers that cause send failures.
-			if err != nil {
-				pack.p.Log().Debug("Transaction send failed", "err", err)
-				delete(pending, pack.p.ID())
-			}
-			// Schedule the next send.
-			if s := pick(); s != nil {
-				send(s)
-			}
-		case <-this.quitSync:
-			return
+// BroadcastTx will propagate a transaction to all peers which are not known to
+// already have the given transaction.
+func (this *SynCtrl) BroadcastTx(hash common.Hash, tx *types.Transaction) {
+	// Broadcast transaction to a batch of peers not knowing about it
+	peers := this.peers.PeersWithoutTx(hash)//todo qinghua's
+	for _, peer := range peers {
+		if peer.RemoteType() == p2p.NtHpnode || peer.RemoteType() == p2p.NtPrenode {//todo qinghua's
+			peer.SendTransactions(types.Transactions{tx})//todo qinghua's
 		}
 	}
-}
 
-func (this *SynCtrl) txBroadcastLoop() {
-	for {
-		select {
-		case event := <-this.txCh:
-			this.BroadcastTx(event.Tx.Hash(), event.Tx)
-
-			// Err() channel will be closed when unsubscribing.
-		case <-this.txSub.Err():
-			return
+	for _, peer := range peers {
+		if peer.RemoteType() == p2p.NtAccess {//todo qinghua's
+			peer.SendTransactions(types.Transactions{tx})//todo qinghua's
 		}
 	}
+
+	for _, peer := range peers {
+		if peer.RemoteType() == p2p.NtLight {//todo qinghua's
+			peer.SendTransactions(types.Transactions{tx})//todo qinghua's
+		}
+	}
+
+	log.Trace("Broadcast transaction", "hash", hash, "recipients", len(peers))
 }
 
 // Mined broadcast loop
