@@ -44,7 +44,7 @@ func TestApplyTx(t *testing.T) {
 		)
 		//var txSlice = make([]*types.Transaction,0,10000)
 		for i = 0; i < 30000; i++ {
-			tx, err = basicTx(types.NewEIP155Signer(gspec.Config.ChainId))
+			tx, err = basicTx(types.NewBoeSigner(gspec.Config.ChainId))
 			if err != nil {
 				t.Fatal(err)
 			}

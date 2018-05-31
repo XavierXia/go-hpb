@@ -90,7 +90,7 @@ func SubmitTx(args SendTxArgs) (common.Hash, error) {
 	//4.return the transaction's hash.
 	if tx.To() == nil {
 		//TODO read from blockchain
-		signer := types.NewEIP155Signer(chainID)
+		signer := types.NewBoeSigner(chainID)
 		from, err := types.Sender(signer, tx)
 		if err != nil {
 			return common.Hash{}, err
@@ -118,7 +118,7 @@ func SubmitRawTx(encodedTx hexutil.Bytes) (common.Hash, error) {
 	if tx.To() == nil {
 		//TODO read from blockchain
 		var chainID *big.Int
-		signer := types.NewEIP155Signer(chainID)
+		signer := types.NewBoeSigner(chainID)
 		from, err := types.Sender(signer, tx)
 		if err != nil {
 			return common.Hash{}, err
@@ -147,7 +147,7 @@ func SubmitRawTxFromP2P(encodedTx hexutil.Bytes) (common.Hash, error) {
 	if tx.To() == nil {
 		//TODO read from blockchain
 		var chainID *big.Int
-		signer := types.NewEIP155Signer(chainID)
+		signer := types.NewBoeSigner(chainID)
 		from, err := types.Sender(signer, tx)
 		if err != nil {
 			return common.Hash{}, err

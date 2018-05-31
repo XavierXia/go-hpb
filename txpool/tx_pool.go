@@ -173,7 +173,7 @@ func NewTxPool(config TxPoolConfig, chainConfig *params.ChainConfig, blockChain 
 		gasPrice: new(big.Int).SetUint64(config.PriceLimit),
 		//FIXME
 		chain:       blockChain,
-		signer:      types.NewEIP155Signer(chainConfig.ChainId),
+		signer:      types.NewBoeSigner(chainConfig.ChainId),
 		chainHeadCh: make(chan event.ChainHeadEvent, 10),
 		stopCh:      make(chan struct{}),
 	}

@@ -647,7 +647,7 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 
 // SetReceiptsData computes all the non-consensus fields of the receipts
 func SetReceiptsData(config *params.ChainConfig, block *types.Block, receipts types.Receipts) {
-	signer := types.MakeSigner(config, block.Number())
+	signer := types.MakeSigner(config)
 
 	transactions, logIndex := block.Transactions(), uint(0)
 
