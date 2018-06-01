@@ -10,6 +10,8 @@ import (
 	"github.com/hpb-project/ghpb/common/log"
 	"github.com/hpb-project/ghpb/common/rlp"
 	"github.com/hpb-project/go-hpb/types"
+	"github.com/orcaman/concurrent-map"
+	"sync"
 )
 
 // SendTxArgs represents the arguments to submit a new transaction into the transaction pool.
@@ -27,6 +29,8 @@ const (
 	defaultGas      = 90000
 	defaultGasPrice = 50 * params.Shannon
 )
+
+var addrLocker = cmap.New()
 
 // prepareSendTxArgs is a helper function that fills in default values for unspecified tx fields.
 func (args *SendTxArgs) setDefaults() error {
@@ -66,8 +70,15 @@ func SubmitTx(args SendTxArgs) (common.Hash, error) {
 	if args.Nonce == nil {
 		// Hold the addresse's mutex around signing to prevent concurrent assignment of
 		// the same nonce to multiple accounts.
-		accounts.LockAddr(args.From)
-		defer accounts.UnlockAddr(args.From)
+		locker,ok := addrLocker.Get(args.From.String())
+		if ok {
+			locker.(*sync.Mutex).Lock()
+			defer locker.(*sync.Mutex).Unlock()
+		}else {
+			locker := new(sync.Mutex)
+			addrLocker.Set(args.From.String(),locker)
+			defer locker.Unlock()
+		}
 	}
 
 	// Set some sanity defaults and terminate on failure
