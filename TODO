@@ -3,5 +3,7 @@
 3.add metrics code for monitor use.
 4.implement bc explorer api.
 5.try to implement neo vm.
-6.fire txpre event unless is remote receive.
-7.call BOE to sign transactions.
+✅ 6.fire txpre event unless is remote receive.(need p2p handler)
+✅ 7.call BOE to sign transactions.
+8.Log pattern
+9.errors pattern
