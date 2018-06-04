@@ -29,17 +29,18 @@ import (
 	"github.com/hpb-project/ghpb/common/log"
 	"github.com/hpb-project/ghpb/network/p2p/discover"
 	"github.com/hpb-project/ghpb/common/rlp"
+	"gopkg.in/fatih/set.v0"
 	"github.com/hpb-project/ghpb/common"
 	"math/big"
-	"gopkg.in/fatih/set.v0"
-	"github.com/hpb-project/ghpb/network/p2p/netutil"
 )
 
 const (
 	baseProtocolVersion    = 5
 	baseProtocolLength     = uint64(16)
 	baseProtocolMaxMsgSize = 2 * 1024
+
 	snappyProtocolVersion = 5
+
 	pingInterval = 15 * time.Second
 )
 
@@ -112,19 +113,20 @@ type Peer struct {
 	// events receives message send / receive events if set
 	events *event.Feed
 
+	////////////////////////////////////////////////////
 	localType  discover.NodeType  //本端节点类型
 	remoteType discover.NodeType  //远端验证后节点类型
-	
-	id string
-	version uint
 
-	head common.Hash
-	td  *big.Int
-	lock sync.RWMutex
+	id       string
+	version  uint        // Protocol version negotiated
+	knownTxs    *set.Set // Set of transaction hashes known to be known by this peer
+	knownBlocks *set.Set // Set of block hashes known to be known by this peer
 
-	knownTxs  *set.Set
-	knownBlocks *set.Set
+	lock     sync.RWMutex
+	td       *big.Int
+	head     common.Hash
 
+	//rw MsgReadWriter
 }
 
 // NewPeer returns a peer for testing purposes.
@@ -479,28 +481,7 @@ func (p *Peer) Info() *PeerInfo {
 }
 
 
-
-// Head retrieves a copy of the current head hash and total difficulty of the
-// peer.
-func (p *Peer) Head() (hash common.Hash, td *big.Int) {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-
-	copy(hash[:], p.head[:])
-	return hash, new(big.Int).Set(p.td)
-}
-
-// SetHead updates the head hash and total difficulty of the peer.
-func (p *Peer) SetHead(hash common.Hash, td *big.Int) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	copy(p.head[:], hash[:])
-	p.td.Set(td)
-}
-///////////////////////////////////////////////////////////////
-//Peer的协议握手
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////
 // statusData is the network packet for the status message.
 type statusData struct {
 	ProtocolVersion uint32
@@ -509,7 +490,6 @@ type statusData struct {
 	CurrentBlock    common.Hash
 	GenesisBlock    common.Hash
 }
-
 // Handshake executes the eth protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
 func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash) error {
@@ -526,9 +506,11 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 			GenesisBlock:    genesis,
 		})
 	}()
+
 	go func() {
 		errc <- p.readStatus(network, &status, genesis)
 	}()
+
 	timeout := time.NewTimer(handshakeTimeout)
 	defer timeout.Stop()
 	for i := 0; i < 2; i++ {
@@ -551,145 +533,20 @@ func (p *Peer) readStatus(network uint64, status *statusData, genesis common.Has
 		return err
 	}
 	if msg.Code != StatusMsg {
-		return netutil.ErrResp(ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, StatusMsg)
-	}
-	if msg.Size > ProtocolMaxMsgSize {
-		return netutil.ErrResp(ErrMsgTooLarge, "%v > %v", msg.Size, ProtocolMaxMsgSize)
+		return errResp(ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, StatusMsg)
 	}
 	// Decode the handshake and make sure everything matches
 	if err := msg.Decode(&status); err != nil {
-		return netutil.ErrResp(ErrDecode, "msg %v: %v", msg, err)
+		return errResp(ErrDecode, "msg %v: %v", msg, err)
 	}
 	if status.GenesisBlock != genesis {
-		return netutil.ErrResp(ErrGenesisBlockMismatch, "%x (!= %x)", status.GenesisBlock[:8], genesis[:8])
+		return errResp(ErrGenesisBlockMismatch, "%x (!= %x)", status.GenesisBlock[:8], genesis[:8])
 	}
 	if status.NetworkId != network {
-		return netutil.ErrResp(ErrNetworkIdMismatch, "%d (!= %d)", status.NetworkId, network)
+		return errResp(ErrNetworkIdMismatch, "%d (!= %d)", status.NetworkId, network)
 	}
 	if uint(status.ProtocolVersion) != p.version {
-		return netutil.ErrResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
+		return errResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
 	}
 	return nil
-}
-
-///////////////////////////////////////////////////////////////
-//Peers Set
-
-// peerSet represents the collection of active peers currently participating in
-// the Hpb sub-protocol.
-type peerSet struct {
-	peers  map[string]*Peer
-	lock   sync.RWMutex
-	closed bool
-}
-
-// newPeerSet creates a new peer set to track the active participants.
-func newPeerSet() *peerSet {
-	return &peerSet{
-		peers: make(map[string]*Peer),
-	}
-}
-
-// Register injects a new peer into the working set, or returns an error if the
-// peer is already known.
-func (ps *peerSet) Register(p *Peer) error {
-	ps.lock.Lock()
-	defer ps.lock.Unlock()
-
-	if ps.closed {
-		return errClosed
-	}
-	if _, ok := ps.peers[p.id]; ok {
-		return errAlreadyRegistered
-	}
-	ps.peers[p.id] = p
-	return nil
-}
-
-// Unregister removes a remote peer from the active set, disabling any further
-// actions to/from that particular entity.
-func (ps *peerSet) Unregister(id string) error {
-	ps.lock.Lock()
-	defer ps.lock.Unlock()
-
-	if _, ok := ps.peers[id]; !ok {
-		return errNotRegistered
-	}
-	delete(ps.peers, id)
-	return nil
-}
-
-// Peer retrieves the registered peer with the given id.
-func (ps *peerSet) Peer(id string) *Peer {
-	ps.lock.RLock()
-	defer ps.lock.RUnlock()
-
-	return ps.peers[id]
-}
-
-// Len returns if the current number of peers in the set.
-func (ps *peerSet) Len() int {
-	ps.lock.RLock()
-	defer ps.lock.RUnlock()
-
-	return len(ps.peers)
-}
-
-// PeersWithoutBlock retrieves a list of peers that do not have a given block in
-// their set of known hashes.
-func (ps *peerSet) PeersWithoutBlock(hash common.Hash) []*Peer {
-	ps.lock.RLock()
-	defer ps.lock.RUnlock()
-
-	list := make([]*Peer, 0, len(ps.peers))
-	for _, p := range ps.peers {
-		if !p.knownBlocks.Has(hash) {
-			list = append(list, p)
-		}
-	}
-	return list
-}
-
-// PeersWithoutTx retrieves a list of peers that do not have a given transaction
-// in their set of known hashes.
-func (ps *peerSet) PeersWithoutTx(hash common.Hash) []*Peer {
-	ps.lock.RLock()
-	defer ps.lock.RUnlock()
-
-	list := make([]*Peer, 0, len(ps.peers))
-	for _, p := range ps.peers {
-		if !p.knownTxs.Has(hash) {
-			list = append(list, p)
-		}
-	}
-	return list
-}
-
-// BestPeer retrieves the known peer with the currently highest total difficulty.
-func (ps *peerSet) BestPeer() *Peer {
-	ps.lock.RLock()
-	defer ps.lock.RUnlock()
-
-	var (
-		bestPeer *Peer
-		bestTd   *big.Int
-	)
-	for _, p := range ps.peers {
-		if _, td := p.Head(); bestPeer == nil || td.Cmp(bestTd) > 0 {
-			bestPeer, bestTd = p, td
-		}
-	}
-	return bestPeer
-}
-
-// Close disconnects all peers.
-// No new peers can be registered after Close has returned.
-func (ps *peerSet) Close() {
-	ps.lock.Lock()
-	defer ps.lock.Unlock()
-
-	for _, p := range ps.peers {
-		p.Disconnect(DiscQuitting)
-	}
-	ps.closed = true
 }

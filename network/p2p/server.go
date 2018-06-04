@@ -204,6 +204,7 @@ type conn struct {
 	id    discover.NodeID // valid after the encryption handshake
 	caps  []Cap           // valid after the protocol handshake
 	name  string          // valid after the protocol handshake
+	version  string          // valid after the protocol handshake
 }
 
 type transport interface {
@@ -385,13 +386,14 @@ func (srv *Server) Start() (err error) {
 
 	// node table
 	if !srv.NoDiscovery {
-		ntab, err := discover.ListenUDP(srv.PrivateKey, srv.ListenAddr, srv.NAT, srv.NodeDatabase, srv.NetRestrict)
+		ntab, err := discover.ListenUDP(srv.PrivateKey, discover.LightNode, srv.ListenAddr, srv.NAT, srv.NodeDatabase, srv.NetRestrict)
 		if err != nil {
 			return err
 		}
 		if err := ntab.SetFallbackNodes(srv.BootstrapNodes); err != nil {
 			return err
 		}
+
 		srv.ntab = ntab
 	}
 
@@ -407,6 +409,8 @@ func (srv *Server) Start() (err error) {
 	for _, p := range srv.Protocols {
 		srv.ourHandshake.Caps = append(srv.ourHandshake.Caps, p.cap())
 	}
+
+
 	// listen/dial
 	if srv.ListenAddr != "" {
 		if err := srv.startListening(); err != nil {

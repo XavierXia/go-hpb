@@ -35,14 +35,15 @@ import (
 	"github.com/hpb-project/ghpb/common/crypto/secp256k1"
 )
 
-const NodeIDBits = 512
+const NodeIDBits   = 512
+const RandNonceSize = 32
 
-type NodeType  uint8
 // 节点类型
+type NodeType  uint8
 const(
-	LightNode  NodeType = 0x00  //默认节点类型，没有通过硬件认证的节点类型都是默认类型 UnknownNode
+	LightNode  NodeType = 0x10  //默认节点类型，没有通过硬件认证的节点类型都是默认类型
 
-	AuthNode   NodeType = 0x30  //经过认证的节点
+	AuthNode   NodeType = 0x30  //普通节点 经过认证的节点
 	PreNode    NodeType = 0x31  //候选节点
 	HpNode     NodeType = 0x60  //高性能节点
 
@@ -72,7 +73,9 @@ type Node struct {
 	IP       net.IP    // len 4 for IPv4 or 16 for IPv6
 	UDP, TCP uint16    // port numbers
 	ID       NodeID    // the node's public key
-	TYPE     NodeType  // 默认为轻节点，通过硬件认证的为候选节点.节点类型需要全网确认.
+
+	TYPE     NodeType  // 默认为轻节点，通过硬件认证的为认证节点.节点类型需要全网确认.
+	Ext      ExtData
 	// This is a cached copy of sha3(ID) which is used for node
 	// distance calculations. This is part of Node in order to make it
 	// possible to write tests that need a node at a certain distance.
@@ -85,6 +88,11 @@ type Node struct {
 	contested bool
 }
 
+type ExtData struct {
+	RandNonce  []byte  // 节点的随机数,用于硬件验证
+	Loacation  uint8   // 节点地理位置信息
+}
+
 // NewNode creates a new node. It is mostly meant to be used for
 // testing purposes.
 func NewNode(id NodeID, nodeType NodeType, ip net.IP, udpPort, tcpPort uint16) *Node {
@@ -92,12 +100,13 @@ func NewNode(id NodeID, nodeType NodeType, ip net.IP, udpPort, tcpPort uint16) *
 		ip = ipv4
 	}
 	return &Node{
-		IP:  ip,
-		UDP: udpPort,
-		TCP: tcpPort,
-		ID:  id,
-		TYPE:nodeType,
-		sha: crypto.Keccak256Hash(id[:]),
+		IP:   ip,
+		UDP:  udpPort,
+		TCP:  tcpPort,
+		ID:   id,
+		sha:  crypto.Keccak256Hash(id[:]),
+		TYPE: nodeType,
+		Ext:  ExtData{make([]byte,RandNonceSize),0xFF},
 	}
 }
 
@@ -136,7 +145,7 @@ func (n *Node) String() string {
 		u.Host = fmt.Sprintf("%x", n.ID[:])
 	} else {
 		addr := net.TCPAddr{IP: n.IP, Port: int(n.TCP)}
-		u.User = url.User(fmt.Sprintf("%x", n.ID[:]))
+		u.User = url.User(fmt.Sprintf("%x&%x&%x", n.ID[:],n.TYPE,n.Ext.Loacation))
 		u.Host = addr.String()
 		if n.UDP != n.TCP {
 			u.RawQuery = "discport=" + strconv.Itoa(int(n.UDP))

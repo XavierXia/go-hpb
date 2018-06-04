@@ -42,6 +42,8 @@ var (
 	nodeDBNilNodeID      = NodeID{}       // Special node ID to use as a nil element.
 	nodeDBNodeExpiration = 24 * time.Hour // Time after which an unseen node should be dropped.
 	nodeDBCleanupCycle   = time.Hour      // Time period for running the expiration task.
+
+	nodeDBNodeExpirationOneHour = time.Hour // Time after which an unseen node should be dropped.
 )
 
 // nodeDB stores all nodes we know about.
@@ -50,6 +52,7 @@ type nodeDB struct {
 	self   NodeID        // Own node id to prevent adding it into the database
 	runner sync.Once     // Ensures we can start at most one expirer
 	quit   chan struct{} // Channel to signal the expiring thread to stop
+	//quited bool          // flag quit status
 }
 
 // Schema layout for the node database
@@ -58,6 +61,7 @@ var (
 	nodeDBItemPrefix = []byte("n:")      // Identifier to prefix node entries with
 
 	nodeDBDiscoverRoot      = ":discover"
+	nodeDBDiscoverReg       = nodeDBDiscoverRoot + ":lastreg"
 	nodeDBDiscoverPing      = nodeDBDiscoverRoot + ":lastping"
 	nodeDBDiscoverPong      = nodeDBDiscoverRoot + ":lastpong"
 	nodeDBDiscoverFindFails = nodeDBDiscoverRoot + ":findfail"
@@ -265,6 +269,17 @@ func (db *nodeDB) expireNodes() error {
 		db.deleteNode(id)
 	}
 	return nil
+}
+
+// lastPing retrieves the time of the last ping packet send to a remote node,
+// requesting binding.
+func (db *nodeDB) lastRegister(id NodeID) time.Time {
+	return time.Unix(db.fetchInt64(makeKey(id, nodeDBDiscoverReg)), 0)
+}
+
+// updateLastPing updates the last time we tried contacting a remote node.
+func (db *nodeDB) updateLastRegister(id NodeID, instance time.Time) error {
+	return db.storeInt64(makeKey(id, nodeDBDiscoverReg), instance.Unix())
 }
 
 // lastPing retrieves the time of the last ping packet send to a remote node,

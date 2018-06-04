@@ -38,8 +38,8 @@ import (
 )
 
 const (
-	alpha      = 3  // Kademlia concurrency factor
-	bucketSize = 16 // Kademlia bucket size
+	alpha      = 3   // Kademlia concurrency factor
+	bucketSize = 500 // Kademlia bucket size
 	hashBits   = len(common.Hash{}) * 8
 	nBuckets   = hashBits + 1 // Number of buckets
 
@@ -49,6 +49,10 @@ const (
 	autoRefreshInterval = 1 * time.Hour
 	seedCount           = 30
 	seedMaxAge          = 5 * 24 * time.Hour
+
+	MaxNodesCount  = 500 //
+	autoRefreshMin = 15 * time.Second
+	updateDBNodeMin= 10 * time.Second
 )
 
 type Table struct {
@@ -70,8 +74,8 @@ type Table struct {
 	net  transport
 	self *Node // metadata of the local node
 
-	RandNonce []byte  //本地产生的随机码
-	AuthNode   map[NodeID]*Node  //通过认证的远端Node集合
+	///////////////////////////
+	nodes   map[NodeID]*Node      //通过认证的远端Node集合
 }
 
 type bondproc struct {
@@ -86,7 +90,10 @@ type bondproc struct {
 type transport interface {
 	ping(NodeID, *net.UDPAddr) error
 	waitping(NodeID) error
+	regto(NodeID, *net.UDPAddr) error
+	pingto(NodeID, *net.UDPAddr,uint16, []byte) error
 	findnode(toid NodeID, addr *net.UDPAddr, target NodeID) ([]*Node, error)
+	getnodes(toid NodeID, addr *net.UDPAddr) ([]*Node, error)
 	close()
 }
 
@@ -94,7 +101,7 @@ type transport interface {
 // that was most recently active is the first element in entries.
 type bucket struct{ entries []*Node }
 
-func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string) (*Table, error) {
+func newTable(t transport, ourID NodeID, nodeType NodeType, ourAddr *net.UDPAddr, nodeDBPath string) (*Table, error) {
 	// If no node database was given, use an in-memory one
 	db, err := newNodeDB(nodeDBPath, Version, ourID)
 	if err != nil {
@@ -105,8 +112,10 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 	//检查本端BOE链接情况，确定真实的声明节点类型
 	//1.调用BOE接口，传入随机数
 	//2.返回结果和计算结果是否一一致。
-	//3.结果一致则认证通过。声明节点类型应该设置为AuthNode
-	nodeType := LightNode
+	//3.结果一致则认证通过。声明节点类型应该设置为AuthNode,此类型需要其他节点验证。
+	if nodeType > LightNode && nodeType < BootNode {
+		//硬件认证检查
+	}
 
 	tab := &Table{
 		net:        t,
@@ -117,14 +126,12 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 		refreshReq: make(chan chan struct{}),
 		closeReq:   make(chan struct{}),
 		closed:     make(chan struct{}),
+		nodes:      make(map[NodeID]*Node),
 	}
-
 	//生成本节点的随机数，用于验证远端节点BOE是否存在
-	tab.RandNonce = make([]byte,32)
-	rand.Read(tab.RandNonce[:])
-	log.Info("init random nonce","RandNonce",tab.RandNonce)
+	rand.Read(tab.self.Ext.RandNonce)
+	log.Info("Node Info","Type",tab.self.TYPE.ToString(), "RandNonce",tab.self.Ext.RandNonce)
 
-	tab.AuthNode = make(map[NodeID]*Node)
 
 	for i := 0; i < cap(tab.bondslots); i++ {
 		tab.bondslots <- struct{}{}
@@ -141,7 +148,21 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 func (tab *Table) Self() *Node {
 	return tab.self
 }
+func (tab *Table) ReadAllNodes()(buf []*Node) {
+	tab.mutex.Lock()
+	defer tab.mutex.Unlock()
 
+	var count int
+	for _, b := range tab.buckets {
+		for _, n := range b.entries {
+			buf = append(buf, n)
+			count = count+1
+		}
+	}
+
+	log.Trace("Read all nodes from boot","cont",count,"buf",buf)
+	return buf
+}
 // ReadRandomNodes fills the given slice with random nodes from the
 // table. It will not write the same node more than once. The nodes in
 // the slice are copies and can be modified by the caller.
@@ -214,7 +235,10 @@ func (tab *Table) SetFallbackNodes(nodes []*Node) error {
 		cpy := *n
 		// Recompute cpy.sha because the node might not have been
 		// created by NewNode or ParseNode.
+		cpy.TYPE = BootNode
 		cpy.sha = crypto.Keccak256Hash(n.ID[:])
+		//把bootnode写入数据库
+		tab.db.updateNode(&cpy)
 		tab.nursery = append(tab.nursery, &cpy)
 	}
 	tab.mutex.Unlock()
@@ -352,7 +376,8 @@ func (tab *Table) refresh() <-chan struct{} {
 // refreshLoop schedules doRefresh runs and coordinates shutdown.
 func (tab *Table) refreshLoop() {
 	var (
-		timer   = time.NewTicker(autoRefreshInterval)
+		//timer   = time.NewTicker(autoRefreshInterval)
+		timer   = time.NewTicker(autoRefreshMin)
 		waiting []chan struct{} // accumulates waiting callers while doRefresh runs
 		done    chan struct{}   // where doRefresh reports completion
 	)
@@ -362,13 +387,13 @@ loop:
 		case <-timer.C:
 			if done == nil {
 				done = make(chan struct{})
-				go tab.doRefresh(done)
+				go tab.doRefreshEx(done)
 			}
 		case req := <-tab.refreshReq:
 			waiting = append(waiting, req)
 			if done == nil {
 				done = make(chan struct{})
-				go tab.doRefresh(done)
+				go tab.doRefreshEx(done)
 			}
 		case <-done:
 			for _, ch := range waiting {
@@ -416,6 +441,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	// The table is empty. Load nodes from the database and insert
 	// them. This should yield a few previously seen nodes that are
 	// (hopefully) still alive.
+	// 从本地数据库查找种子节点
 	seeds := tab.db.querySeeds(seedCount, seedMaxAge)
 	seeds = tab.bondall(append(seeds, tab.nursery...))
 
@@ -462,7 +488,8 @@ func (tab *Table) bondall(nodes []*Node) (result []*Node) {
 	rc := make(chan *Node, len(nodes))
 	for i := range nodes {
 		go func(n *Node) {
-			nn, _ := tab.bond(false, n.ID, n.addr(), uint16(n.TCP))
+			log.Info("bondall","Node",n.String())
+			nn, _ := tab.bond(false, n.ID, n.TYPE,n.addr(), uint16(n.TCP),n.Ext.RandNonce)
 			rc <- nn
 		}(nodes[i])
 	}
@@ -490,7 +517,7 @@ func (tab *Table) bondall(nodes []*Node) (result []*Node) {
 //
 // If pinged is true, the remote node has just pinged us and one half
 // of the process can be skipped.
-func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16) (*Node, error) {
+func (tab *Table) bond(pinged bool, id NodeID, tp NodeType,addr *net.UDPAddr, tcpPort uint16,nonce []byte) (*Node, error) {
 	if id == tab.self.ID {
 		return nil, errors.New("is self")
 	}
@@ -503,7 +530,7 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 	var result error
 	age := time.Since(tab.db.lastPong(id))
 	if node == nil || fails > 0 || age > nodeDBNodeExpiration {
-		log.Trace("Starting bonding ping/pong", "id", id, "known", node != nil, "failcount", fails, "age", age)
+		log.Info("Starting bonding ping/pong", "id", id, "known", node != nil, "failcount", fails, "age", age)
 
 		tab.bondmu.Lock()
 		w := tab.bonding[id]
@@ -517,7 +544,7 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 			tab.bonding[id] = w
 			tab.bondmu.Unlock()
 			// Do the ping/pong. The result goes into w.
-			tab.pingpong(w, pinged, id, addr, tcpPort)
+			tab.pingpong(w, pinged, id, tp, addr, tcpPort,nonce)
 			// Unregister the process after it's done.
 			tab.bondmu.Lock()
 			delete(tab.bonding, id)
@@ -539,7 +566,8 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 	return node, result
 }
 
-func (tab *Table) pingpong(w *bondproc, pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16) {
+
+func (tab *Table) pingpong(w *bondproc, pinged bool, id NodeID,tp NodeType, addr *net.UDPAddr, tcpPort uint16,nonce []byte) {
 	// Request a bonding slot to limit network usage
 	<-tab.bondslots
 	defer func() { tab.bondslots <- struct{}{} }()
@@ -556,7 +584,11 @@ func (tab *Table) pingpong(w *bondproc, pinged bool, id NodeID, addr *net.UDPAdd
 		tab.net.waitping(id)
 	}
 	// Bonding succeeded, update the node database.
-	w.n = NewNode(id, LightNode, addr.IP, uint16(addr.Port), tcpPort)
+	w.n = NewNode(id, tp, addr.IP, uint16(addr.Port), tcpPort)
+	copy(w.n.Ext.RandNonce,nonce)
+	log.Info("NewNode","Node",w.n.String())
+	//log.Info("Node Info","Type",w.n.TYPE.ToString(),"Nonce",nonce)
+
 	tab.db.updateNode(w.n)
 	close(w.done)
 }
@@ -614,6 +646,7 @@ func (tab *Table) add(new *Node) {
 	}
 	added := b.replace(new, oldest)
 	if added && tab.nodeAddedHook != nil {
+		log.Info("Add To Bucket Node","Node",new.String())
 		tab.nodeAddedHook(new)
 	}
 }
@@ -632,6 +665,7 @@ outer:
 				continue outer // already in bucket
 			}
 		}
+
 		if len(bucket.entries) < bucketSize {
 			bucket.entries = append(bucket.entries, n)
 			if tab.nodeAddedHook != nil {
@@ -713,3 +747,154 @@ func (h *nodesByDistance) push(n *Node, maxElems int) {
 		h.entries[ix] = n
 	}
 }
+
+////////////////////////////////////////////////////////////////////////////
+
+func (tab *Table) doRefreshEx(done chan struct{}) {
+	defer close(done)
+
+	//1.向bootnode更新本节点属性信息
+	var boots []*Node
+	boots = append(boots, tab.nursery...)
+	rc := make(chan error, len(boots))
+	for i := range boots {
+		go func(n *Node) {
+			log.Debug("Start to register","NodeID",n.ID)
+			err:= tab.register(n)
+
+			//2.向bootnode获取全网节点信息
+			if err == nil{
+				log.Debug("Start to update nodes......")
+				tab.updateNodes(n)
+			}
+
+			rc <- err
+		}(boots[i])
+	}
+
+	for range boots {
+		if err := <-rc; err != nil {
+			//log.Error("register to boot node","error",err)
+			//result = append(result, n)
+		}
+	}
+
+
+	//3.更新本地数据库及节点列表
+
+	//tab.lookup(tab.self.ID, false)
+}
+
+func (tab *Table) register(n *Node)(error)  {
+	// Request a bonding slot to limit network usage
+	<-tab.bondslots
+	defer func() { tab.bondslots <- struct{}{} }()
+
+	if err := tab.net.regto(n.ID, n.addr()); err != nil {
+		log.Error("register to boot node error","ID",n.ID, "ADDR",n.addr().String(),"err",err)
+		return err
+	}
+
+	return  nil
+}
+
+//更新节点信息到table列表及数据库中的数据
+func (tab *Table) bondRegNode(id NodeID,addr *net.UDPAddr, tcpPort uint16,ext ExtData) (*Node, error) {
+	if id == tab.self.ID {
+		return nil, errors.New("bond node is self")
+	}
+
+	node := tab.db.node(id)
+	age := time.Since(tab.db.lastRegister(id))
+
+	if age < updateDBNodeMin {
+		log.Error("register to me frequently","Node",node.String())
+		return nil, errors.New("register to me frequently")
+	}
+
+	if node == nil  {
+		node = NewNode(id, LightNode, addr.IP, uint16(addr.Port), tcpPort)
+	}else{
+	}
+	copy(node.Ext.RandNonce,ext.RandNonce)
+
+	// Request a bonding slot to limit network usage
+	<-tab.bondslots
+	defer func() { tab.bondslots <- struct{}{} }()
+
+	// Ping the remote side and wait for a pong.
+	if err := tab.net.pingto(node.ID, node.addr(), node.TCP, node.Ext.RandNonce); err != nil {
+
+		if node.TYPE != LightNode {
+			node.TYPE = LightNode
+			tab.db.updateNode(node)
+		}
+		tab.db.updateLastRegister(id, time.Now())
+		return nil,err
+	}
+
+	//通过认证
+	//TODO:判断node是否需要数据更新，再进行update，避免node对象过多，增加垃圾回收负担
+	node.TYPE = AuthNode
+	tab.db.updateNode(node)
+	tab.db.updateLastRegister(id, time.Now())
+	//log.Debug("Update node to db","Node",node.String())
+
+	tab.addNode(node)
+
+	return node, nil
+}
+
+func (tab *Table) addNode(new *Node) {
+	if new.ID == tab.self.ID {
+		//log.Error("add node is self")
+		return
+	}
+
+	b := tab.buckets[logdist(tab.self.sha, new.sha)]
+	tab.mutex.Lock()
+	defer tab.mutex.Unlock()
+
+	for i := range b.entries {
+		if b.entries[i].ID == new.ID {
+			b.entries[i] = new
+			log.Debug("Update node to bucket","Node",new.String())
+			return
+		}
+	}
+
+	if len(b.entries) < bucketSize {
+		b.entries = append(b.entries, new)
+	}
+	log.Info("Add node to bucket","Node",new.String())
+
+	if tab.nodeAddedHook != nil {
+		tab.nodeAddedHook(new)
+	}
+
+}
+
+
+
+func (tab *Table) updateNodes(node *Node)  {
+
+ 	var reply = make(chan []*Node)
+	go func() {
+		r, err := tab.net.getnodes(node.ID, node.addr())
+		if err != nil {
+			log.Error("get nodes from boot", "error", err)
+		}
+		reply <- r
+	}()
+
+	for _, n := range <-reply {
+		if n != nil{
+			tab.addNode(n)
+		}
+	}
+
+	return
+}
+
+
+
