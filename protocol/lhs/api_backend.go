@@ -34,7 +34,7 @@ import (
 	"github.com/hpb-project/go-hpb/protocol/downloader"
 	"github.com/hpb-project/go-hpb/protocol/gasprice"
 	"github.com/hpb-project/go-hpb/protocol/light"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 )
 
 type LhsApiBackend struct {

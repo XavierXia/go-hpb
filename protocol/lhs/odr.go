@@ -19,7 +19,7 @@ package lhs
 import (
 	"context"
 
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 	"github.com/hpb-project/go-hpb/protocol/light"
 	"github.com/hpb-project/go-hpb/common/log"
 )

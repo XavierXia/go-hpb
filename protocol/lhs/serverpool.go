@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/hpb-project/go-hpb/common/mclock"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 	"github.com/hpb-project/go-hpb/common/log"
 	"github.com/hpb-project/go-hpb/network/p2p"
 	"github.com/hpb-project/go-hpb/network/p2p/discover"

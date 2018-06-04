@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/hpb-project/go-hpb/blockchain/types"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 )
 
 // Runs multiple tests with randomized parameters.

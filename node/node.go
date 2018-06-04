@@ -27,7 +27,7 @@ import (
 	"sync"
 
 	"github.com/hpb-project/go-hpb/account"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 	"github.com/hpb-project/go-hpb/blockchain/event"
 	"github.com/hpb-project/go-hpb/internal/debug"
 	"github.com/hpb-project/go-hpb/common/log"

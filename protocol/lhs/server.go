@@ -27,7 +27,7 @@ import (
 	"github.com/hpb-project/go-hpb/blockchain"
 	"github.com/hpb-project/go-hpb/blockchain/types"
 	"github.com/hpb-project/go-hpb/protocol"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 	"github.com/hpb-project/go-hpb/protocol/lhs/flowcontrol"
 	"github.com/hpb-project/go-hpb/protocol/light"
 	"github.com/hpb-project/go-hpb/common/log"

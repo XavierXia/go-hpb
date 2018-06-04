@@ -40,7 +40,7 @@ import (
 	"github.com/hpb-project/go-hpb/protocol"
 	"github.com/hpb-project/go-hpb/protocol/downloader"
 	"github.com/hpb-project/go-hpb/protocol/gasprice"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 	"github.com/hpb-project/go-hpb/protocol/hpbstats"
 	"github.com/hpb-project/go-hpb/protocol/lhs"
 	"github.com/hpb-project/go-hpb/common/log"

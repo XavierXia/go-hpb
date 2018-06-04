@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/hpb-project/go-hpb/common"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 )
 
 // makeTestTrie create a sample test trie to test node-wise reconstruction.

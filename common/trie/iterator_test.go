@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/hpb-project/go-hpb/common"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 )
 
 func TestIterator(t *testing.T) {

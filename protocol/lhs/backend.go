@@ -40,7 +40,7 @@ import (
 	"github.com/hpb-project/go-hpb/protocol/filters"
 	"github.com/hpb-project/go-hpb/protocol/gasprice"
 	"github.com/hpb-project/go-hpb/protocol/light"
-	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/blockchain/storage"
 )
 
 type LightHpb struct {

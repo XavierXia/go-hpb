@@ -137,7 +137,7 @@ type SyncStatusSubscription struct {
 	unsubOnce sync.Once            // make sure unsubscribe logic is executed once
 }
 
-// Unsubscribe uninstalls the subscription from the DownloadAPI event loop.
+// Unsubscribe uninstalls the subscription from the SynAPI event loop.
 // The status channel that was passed to subscribeSyncStatus isn't used anymore
 // after this method returns.
 func (s *SyncStatusSubscription) Unsubscribe() {
