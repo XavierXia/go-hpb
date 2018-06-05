@@ -22,7 +22,6 @@ import (
 
 	"github.com/hpb-project/ghpb/core/event"
 	"sync/atomic"
-	"github.com/hpb-project/go-hpb/account/keystore"
 )
 
 var INSTANCE = atomic.Value{}
@@ -30,7 +29,7 @@ var INSTANCE = atomic.Value{}
 // Manager is an overarching account manager that can communicate with various
 // backends for signing transactions.
 type Manager struct {
-	store    *keystore.KeyStore // Index of backends currently registered
+	store    Backend // Index of backends currently registered
 	updater event.Subscription // Wallet update subscriptions for all backends
 	updates  chan WalletEvent   // Subscription sink for backend wallet changes
 	wallets  []Wallet           // Cache of all wallets from all registered backends
@@ -43,21 +42,21 @@ type Manager struct {
 
 // NewManager creates a generic account manager to sign transaction via various
 // supported backends.
-func NewManager(store *keystore.KeyStore) *Manager {
+func NewManager(back Backend) *Manager {
 	if INSTANCE.Load() != nil {
 		return GetManager()
 	}
 	// Subscribe to wallet notifications from all backends
 	updates := make(chan WalletEvent, 4)
 
-	sub := store.Subscribe(updates)
+	sub := back.Subscribe(updates)
 
 	// Assemble the account manager and return
 	am := &Manager{
-		store: store,
+		store: back,
 		updater: sub,
 		updates:  updates,
-		wallets:  store.Wallets(),
+		wallets:  back.Wallets(),
 		quit:     make(chan chan error),
 	}
 	go am.update()

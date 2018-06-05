@@ -32,18 +32,20 @@ func TestApplyTx(t *testing.T) {
 	blockchain, _ := NewBlockChain(db, gspec.Config, solo.New())
 	defer blockchain.Stop()
 	var blockCount = 1
+	code    := common.Hex2Bytes("60606040525b7f24ec1d3ff24c2f6ff210738839dbc339cd45a5294d85c79361016243157aae7b60405180905060405180910390a15b600a8060416000396000f360606040526008565b00")
 	blocks, _ := GenerateChain(gspec.Config, genesis, db, blockCount, func(i int, block *BlockGen) {
 		var (
 			tx      *types.Transaction
 			err     error
 			basicTx = func(signer types.Signer) (*types.Transaction, error) {
-				tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil), signer, key)
+				tx, _ := types.SignTx(types.NewContractCreation(block.TxNonce(address),new(big.Int), big.NewInt(100000),new(big.Int), code), signer, key)
+				//tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil), signer, key)
 				tx.SetFrom(address)
 				return tx, nil
 			}
 		)
 		//var txSlice = make([]*types.Transaction,0,10000)
-		for i = 0; i < 30000; i++ {
+		for i = 0; i < 1; i++ {
 			tx, err = basicTx(types.NewBoeSigner(gspec.Config.ChainId))
 			if err != nil {
 				t.Fatal(err)
