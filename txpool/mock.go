@@ -82,9 +82,5 @@ func MockAccountManager(useLightweightKDF bool, keyStoreDir string, dataDir stri
 	if err := os.MkdirAll(keydir, 0700); err != nil {
 		return nil, "", err
 	}
-	// Assemble the account manager and supported backends
-	backends := []accounts.Backend{
-		keystore.NewKeyStore(keydir, scryptN, scryptP),
-	}
-	return accounts.NewManager(backends...), ephemeral, nil
+	return accounts.NewManager(keystore.NewKeyStore(keydir, scryptN, scryptP)), ephemeral, nil
 }
