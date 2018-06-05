@@ -18,25 +18,48 @@ package p2p
 
 import (
 	"sync"
+	"errors"
+	"math/big"
+	"github.com/hpb-project/ghpb/common"
 )
 
 
-type peerSet struct {
-	peers  map[string]*Peer
-	lock   sync.RWMutex
-	closed bool
-}
+var (
+	errClosed            = errors.New("peer set is closed")
+	errAlreadyRegistered = errors.New("peer is already registered")
+	errNotRegistered     = errors.New("peer is not registered")
+)
 
 type PeerManager struct {
+	lock   sync.RWMutex
+	peers  map[string]*Peer
+	closed bool
 
-	peers       *peerSet
 	//protocols []p2p.Protocol
+}
+
+var m *PeerManager
+var lock *sync.Mutex = &sync.Mutex {}
+
+func PMInstance() *PeerManager {
+	lock.Lock()
+	defer lock.Unlock()
+	if m == nil {
+		m ,_ = NewPeerManager()
+	}
+	return m
 }
 
 //
 func NewPeerManager() (*PeerManager,error) {
 
-	return nil,nil
+	pm :=&PeerManager{
+		peers: make(map[string]*Peer),
+	}
+
+	return pm,nil
+
+
 }
 
 func (peermgr *PeerManager)Start(){
@@ -48,6 +71,112 @@ func (peermgr *PeerManager)Stop(){
 }
 
 //接口定义
+
+
+// Register injects a new peer into the working set, or returns an error if the
+// peer is already known.
+func (prm *PeerManager) register(p *Peer) error {
+	prm.lock.Lock()
+	defer prm.lock.Unlock()
+
+	if prm.closed {
+		return errClosed
+	}
+	if _, ok := prm.peers[p.id]; ok {
+		return errAlreadyRegistered
+	}
+	prm.peers[p.id] = p
+	return nil
+}
+
+// Unregister removes a remote peer from the active set, disabling any further
+// actions to/from that particular entity.
+func (prm *PeerManager) unregister(id string) error {
+	prm.lock.Lock()
+	defer prm.lock.Unlock()
+
+	if _, ok := prm.peers[id]; !ok {
+		return errNotRegistered
+	}
+	delete(prm.peers, id)
+	return nil
+}
+
+// Peer retrieves the registered peer with the given id.
+func (prm *PeerManager) Peer(id string) *Peer {
+	prm.lock.RLock()
+	defer prm.lock.RUnlock()
+
+	return prm.peers[id]
+}
+
+// Len returns if the current number of peers in the set.
+func (prm *PeerManager) PeersCount() int {
+	prm.lock.RLock()
+	defer prm.lock.RUnlock()
+
+	return len(prm.peers)
+}
+
+// PeersWithoutBlock retrieves a list of peers that do not have a given block in
+// their set of known hashes.
+func (prm *PeerManager) PeersWithoutBlock(hash common.Hash) []*Peer {
+	prm.lock.RLock()
+	defer prm.lock.RUnlock()
+
+	list := make([]*Peer, 0, len(prm.peers))
+	for _, p := range prm.peers {
+		if !p.knownBlocks.Has(hash) {
+			list = append(list, p)
+		}
+	}
+	return list
+}
+
+// PeersWithoutTx retrieves a list of peers that do not have a given transaction
+// in their set of known hashes.
+func (prm *PeerManager) PeersWithoutTx(hash common.Hash) []*Peer {
+	prm.lock.RLock()
+	defer prm.lock.RUnlock()
+
+	list := make([]*Peer, 0, len(prm.peers))
+	for _, p := range prm.peers {
+		if !p.knownTxs.Has(hash) {
+			list = append(list, p)
+		}
+	}
+	return list
+}
+
+// BestPeer retrieves the known peer with the currently highest total difficulty.
+func (prm *PeerManager) BestPeer() *Peer {
+	prm.lock.RLock()
+	defer prm.lock.RUnlock()
+
+	var (
+		bestPeer *Peer
+		bestTd   *big.Int
+	)
+	for _, p := range prm.peers {
+		if _, td := p.Head(); bestPeer == nil || td.Cmp(bestTd) > 0 {
+			bestPeer, bestTd = p, td
+		}
+	}
+	return bestPeer
+}
+
+// Close disconnects all peers.
+// No new peers can be registered after Close has returned.
+func (prm *PeerManager) closePeers() {
+	prm.lock.Lock()
+	defer prm.lock.Unlock()
+
+	for _, p := range prm.peers {
+		p.Disconnect(DiscQuitting)
+	}
+	prm.closed = true
+}
+
 
 
 

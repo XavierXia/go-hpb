@@ -174,6 +174,7 @@ type Server struct {
 	addpeer       chan *conn
 	delpeer       chan peerDrop
 	loopWG        sync.WaitGroup // loop, listenLoop
+
 	peerFeed      event.Feed
 }
 

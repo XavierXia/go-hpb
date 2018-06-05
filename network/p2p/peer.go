@@ -45,6 +45,11 @@ const (
 )
 
 const (
+	maxKnownTxs      = 1000000 // Maximum transactions hashes to keep in the known list (prevent DOS) //for testnet
+	maxKnownBlocks   = 100000  // Maximum block hashes to keep in the known list (prevent DOS)  //for testnet
+)
+
+const (
 	// devp2p message codes
 	handshakeMsg = 0x00
 	discMsg      = 0x01
@@ -126,6 +131,7 @@ type Peer struct {
 	td       *big.Int
 	head     common.Hash
 
+	bandwidth float32
 	//rw MsgReadWriter
 }
 
@@ -136,6 +142,20 @@ func NewPeer(id discover.NodeID, name string, caps []Cap) *Peer {
 	peer := newPeer(conn, nil)
 	close(peer.closed) // ensures Disconnect doesn't block
 	return peer
+}
+
+func newPeer(conn *conn, protocols []Protocol) *Peer {
+	protomap := matchProtocols(protocols, conn.caps, conn)
+	p := &Peer{
+		rw:       conn,
+		running:  protomap,
+		created:  mclock.Now(),
+		disc:     make(chan DiscReason),
+		protoErr: make(chan error, len(protomap)+1), // protocols + pingLoop
+		closed:   make(chan struct{}),
+		log:      log.New("id", conn.id, "conn", conn.flags),
+	}
+	return p
 }
 
 // ID returns the node's public key.
@@ -169,6 +189,11 @@ func (p *Peer) RemoteType() discover.NodeType {
 	return p.remoteType
 }
 
+func (p *Peer) SetRemoteType(nt discover.NodeType) bool {
+	p.remoteType = nt
+	return true
+}
+
 // LocalType returns the local type of the node.
 func (p *Peer) LocalType() discover.NodeType {
 	return p.localType
@@ -186,20 +211,6 @@ func (p *Peer) Disconnect(reason DiscReason) {
 // String implements fmt.Stringer.
 func (p *Peer) String() string {
 	return fmt.Sprintf("Peer %x %v", p.rw.id[:8], p.RemoteAddr())
-}
-
-func newPeer(conn *conn, protocols []Protocol) *Peer {
-	protomap := matchProtocols(protocols, conn.caps, conn)
-	p := &Peer{
-		rw:       conn,
-		running:  protomap,
-		created:  mclock.Now(),
-		disc:     make(chan DiscReason),
-		protoErr: make(chan error, len(protomap)+1), // protocols + pingLoop
-		closed:   make(chan struct{}),
-		log:      log.New("id", conn.id, "conn", conn.flags),
-	}
-	return p
 }
 
 func (p *Peer) Log() log.Logger {
@@ -550,3 +561,81 @@ func (p *Peer) readStatus(network uint64, status *statusData, genesis common.Has
 	}
 	return nil
 }
+
+
+// Head retrieves a copy of the current head hash and total difficulty of the
+// peer.
+func (p *Peer) Head() (hash common.Hash, td *big.Int) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	copy(hash[:], p.head[:])
+	return hash, new(big.Int).Set(p.td)
+}
+
+// SetHead updates the head hash and total difficulty of the peer.
+func (p *Peer) SetHead(hash common.Hash, td *big.Int) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	copy(p.head[:], hash[:])
+	p.td.Set(td)
+}
+
+// MarkBlock marks a block as known for the peer, ensuring that the block will
+// never be propagated to this particular peer.
+func (p *Peer) KnownBlockAdd(hash common.Hash) {
+	for p.knownBlocks.Size() >= maxKnownBlocks {
+		p.knownBlocks.Pop()
+	}
+	p.knownBlocks.Add(hash)
+}
+func (p *Peer) KnownBlockPop() {
+	p.knownBlocks.Pop()
+}
+func (p *Peer) KnownBlockSize() {
+	p.knownBlocks.Size()
+}
+func (p *Peer) KnownBlockHas(hash common.Hash) bool {
+	return  p.knownBlocks.Has(hash)
+}
+
+
+// MarkTransaction marks a transaction as known for the peer, ensuring that it
+// will never be propagated to this particular peer.
+func (p *Peer) KnownTxsAdd(hash common.Hash) {
+	// If we reached the memory allowance, drop a previously known transaction hash
+	for p.knownTxs.Size() >= maxKnownTxs {
+		p.knownTxs.Pop()
+	}
+	p.knownTxs.Add(hash)
+}
+func (p *Peer) KnownTxsPop() {
+	p.knownTxs.Pop()
+}
+func (p *Peer) KnownTxsSize() {
+	p.knownTxs.Size()
+}
+func (p *Peer) KnownTxsHas(hash common.Hash) {
+	p.knownTxs.Has(hash)
+}
+
+func (p *Peer) BandWidth() float32 {
+	return p.bandwidth
+}
+
+func (p *Peer) SetBandWidth(bw float32) bool {
+	p.bandwidth = bw
+	return true
+}
+
+func (p *Peer) TestBandWidth() float32 {
+	//TODO:开始测试对端的带宽
+	return p.bandwidth
+}
+
+
+func (p *Peer) SendMsg(msgCode uint64, data interface{}) error{
+	return Send(p.rw,msgCode,data)
+}
+

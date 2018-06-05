@@ -89,6 +89,7 @@ func (cs capsByNameAndVersion) Less(i, j int) bool {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //HPB 协议
 type Hpb struct {
+
 	SubProtocols []Protocol
 	//lesServer       LesServer
 }
@@ -144,7 +145,7 @@ func (s *Hpb) Protocols() []Protocol {
 	return s.SubProtocols
 }
 
-func (s *Hpb) Start(srvr *Server) error {
+func (s *Hpb) Start() error {
 
 	// Initiate a sub-protocol for every implemented version we can handle
 	s.SubProtocols = make([]Protocol, 0, len(ProtoVersions))

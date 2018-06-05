@@ -136,7 +136,6 @@ func newDialState(static []*discover.Node, bootnodes []*discover.Node, ntab disc
 		dialing:     make(map[discover.NodeID]connFlag),
 		bootnodes:   make([]*discover.Node, len(bootnodes)),
 		randomNodes: make([]*discover.Node, maxdyn/2),
-		//refreshNodes:make([]*discover.Node,discover.MaxNodesCount),
 		hist:        new(dialHistory),
 	}
 
