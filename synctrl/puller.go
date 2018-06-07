@@ -172,13 +172,13 @@ func NewPuller(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadca
 
 // Start boots up the announcement based synchroniser, accepting and processing
 // hash notifications and block fetches until termination requested.
-func (this *Puller) Start() {
+func (this *Puller) start() {
 	go this.loop()
 }
 
 // Stop terminates the announcement based synchroniser, canceling all pending
 // operations.
-func (this *Puller) Stop() {
+func (this *Puller) stop() {
 	close(this.quit)
 }
 

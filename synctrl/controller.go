@@ -174,7 +174,7 @@ func NewSynCtrl(config *params.ChainConfig, mode SyncMode, networkId uint64, mux
 		atomic.StoreUint32(&synctrl.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		return core.InstanceBlockChain().InsertChain(blocks)
 	}
-	synctrl.puller = NewPuller(core.InstanceBlockChain().GetBlockByHash, validator, synctrl.BroadcastBlock, heighter, inserter, synctrl.removePeer)//todo removerPeer
+	synctrl.puller = NewPuller(core.InstanceBlockChain().GetBlockByHash, validator, synctrl.broadcastBlock, heighter, inserter, synctrl.removePeer)//todo removerPeer
 
 	return synctrl, nil
 }
@@ -196,7 +196,7 @@ func (this *SynCtrl) Start() {
 
 // BroadcastTx will propagate a transaction to all peers which are not known to
 // already have the given transaction.
-func (this *SynCtrl) BroadcastTx(hash common.Hash, tx *types.Transaction) {
+func (this *SynCtrl) broadcastTx(hash common.Hash, tx *types.Transaction) {
 	// Broadcast transaction to a batch of peers not knowing about it
 	peers := this.peers.PeersWithoutTx(hash)//todo qinghua's
 	for _, peer := range peers {
@@ -226,8 +226,8 @@ func (this *SynCtrl) minedBroadcastLoop() {
 	for obj := range this.minedBlockSub.Chan() {
 		switch ev := obj.Data.(type) {
 		case core.NewMinedBlockEvent:
-			this.BroadcastBlock(ev.Block, true)  // First propagate block to peers
-			this.BroadcastBlock(ev.Block, false) // Only then announce to the rest
+			this.broadcastBlock(ev.Block, true)  // First propagate block to peers
+			this.broadcastBlock(ev.Block, false) // Only then announce to the rest
 		}
 	}
 }
@@ -236,9 +236,9 @@ func (this *SynCtrl) minedBroadcastLoop() {
 // downloading hashes and blocks as well as handling the announcement handler.
 func (this *SynCtrl) sync() {
 	// Start and ensure cleanup of sync mechanisms
-	this.puller.Start()
-	defer this.puller.Stop()
-	defer this.syner.Terminate()
+	this.puller.start()
+	defer this.puller.stop()
+	defer this.syner.terminate()
 
 	// Wait for different events to fire synchronisation operations
 	forceSync := time.NewTicker(forceSyncCycle)
@@ -312,7 +312,7 @@ func (this *SynCtrl) synchronise(peer *peer) {
 		// scenario will most often crop up in private and hackathon networks with
 		// degenerate connectivity, but it should be healthy for the mainnet too to
 		// more reliably update peers or the local TD state.
-		go this.BroadcastBlock(head, false)
+		go this.broadcastBlock(head, false)
 	}
 }
 
@@ -343,7 +343,7 @@ func (this *SynCtrl) Stop() {
 
 // BroadcastBlock will either propagate a block to a subset of it's peers, or
 // will only announce it's availability (depending what's requested).
-func (this *SynCtrl) BroadcastBlock(block *types.Block, propagate bool) {
+func (this *SynCtrl) broadcastBlock(block *types.Block, propagate bool) {
 	hash := block.Hash()
 	peers := this.peers.PeersWithoutBlock(hash)//todo qinghua's
 

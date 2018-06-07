@@ -118,7 +118,7 @@ func (this *SynCtrl) txBroadcastLoop() {
 	for {
 		select {
 		case event := <-this.txCh:
-			this.BroadcastTx(event.Tx.Hash(), event.Tx)
+			this.broadcastTx(event.Tx.Hash(), event.Tx)
 
 			// Err() channel will be closed when unsubscribing.
 		case <-this.txSub.Err():

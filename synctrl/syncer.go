@@ -306,7 +306,7 @@ func (this *Syncer) syn(id string, hash common.Hash, td *big.Int, mode SyncMode)
 
 // Terminate interrupts the syn, canceling all pending operations.
 // The syncer cannot be reused after calling Terminate.
-func (this *Syncer) Terminate() {
+func (this *Syncer) terminate() {
 	// Close the termination channel (make sure double close is allowed)
 	this.quitLock.Lock()
 	select {

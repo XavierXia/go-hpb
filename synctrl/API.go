@@ -121,7 +121,7 @@ func (api *PublicSyncerAPI) Syncing(ctx context.Context) (*rpc.Subscription, err
 // SyncingResult provides information about the current synchronisation status for this node.
 type SyncingResult struct {
 	Syncing bool                  `json:"syncing"`
-	Status  hpb.SyncProgress `json:"status"`
+	Status  hpb.SyncProgress      `json:"status"`
 }
 
 // uninstallSyncSubscriptionRequest uninstalles a syncing subscription in the API event loop.
