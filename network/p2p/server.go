@@ -27,6 +27,7 @@ import (
 
 	"github.com/hpb-project/ghpb/common"
 	"github.com/hpb-project/ghpb/common/mclock"
+	"github.com/hpb-project/ghpb/core/event"
 	"github.com/hpb-project/ghpb/common/log"
 	"github.com/hpb-project/ghpb/network/p2p/discover"
 	"github.com/hpb-project/ghpb/network/p2p/nat"
@@ -61,7 +62,7 @@ type Config struct {
 
 	// MaxPeers is the maximum number of peers that can be
 	// connected. It must be greater than zero.
-	MaxPeers int
+	//MaxPeers int
 
 	// MaxPendingPeers is the maximum number of peers that can be pending in the
 	// handshake phase, counted separately for inbound and outbound connections.
@@ -70,7 +71,7 @@ type Config struct {
 
 	// NoDiscovery can be used to disable the peer discovery mechanism.
 	// Disabling is useful for protocol debugging (manual topology).
-	NoDiscovery bool
+	//NoDiscovery bool
 
 	// DiscoveryV5 specifies whether the the new topic-discovery based V5 discovery
 	// protocol should be started or not.
@@ -204,7 +205,7 @@ type conn struct {
 	id    discover.NodeID // valid after the encryption handshake
 	caps  []Cap           // valid after the protocol handshake
 	name  string          // valid after the protocol handshake
-	version  string          // valid after the protocol handshake
+	version  string       // valid after the protocol handshake
 }
 
 type transport interface {
@@ -365,6 +366,12 @@ func (srv *Server) Start() (err error) {
 	srv.running = true
 	log.Info("Starting P2P networking")
 
+	//hpbProto ,err := NewHpbProtos()
+	//log.Info("Hpb protocol","Hpb",hpbProto.Protocols())
+
+	//copy(srv.Protocols, hpbProto.Protocols())
+	//log.Info("Server","protocol",srv.Protocols)
+
 	// static fields
 	if srv.PrivateKey == nil {
 		return fmt.Errorf("Server.PrivateKey must be set to a non-nil key")
@@ -385,24 +392,17 @@ func (srv *Server) Start() (err error) {
 	srv.peerOpDone = make(chan struct{})
 
 	// node table
-	if !srv.NoDiscovery {
-		ntab, err := discover.ListenUDP(srv.PrivateKey, discover.LightNode, srv.ListenAddr, srv.NAT, srv.NodeDatabase, srv.NetRestrict)
-		if err != nil {
-			return err
-		}
-		if err := ntab.SetFallbackNodes(srv.BootstrapNodes); err != nil {
-			return err
-		}
-
-		srv.ntab = ntab
+	ntab, err := discover.ListenUDP(srv.PrivateKey, discover.LightNode, srv.ListenAddr, srv.NAT, srv.NodeDatabase, srv.NetRestrict)
+	if err != nil {
+		return err
+	}
+	if err := ntab.SetFallbackNodes(srv.BootstrapNodes); err != nil {
+		return err
 	}
 
-	dynPeers := (srv.MaxPeers + 1) / 2
-	if srv.NoDiscovery {
-		dynPeers = 0
-	}
+	srv.ntab = ntab
 
-	dialer := newDialState(srv.StaticNodes, srv.BootstrapNodes, srv.ntab, dynPeers, srv.NetRestrict)
+	dialer := newDialState(srv.StaticNodes, srv.BootstrapNodes, srv.ntab, srv.NetRestrict)
 
 	// handshake
 	srv.ourHandshake = &protoHandshake{Version: baseProtocolVersion, Name: srv.Name, ID: discover.PubkeyID(&srv.PrivateKey.PublicKey)}
@@ -556,7 +556,7 @@ running:
 			err := srv.protoHandshakeChecks(peers, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
-				p := newPeer(c, srv.Protocols)
+				p := newPeer(c, srv.Protocols[0])
 				// If message events are enabled, pass the peerFeed
 				// to the peer
 				if srv.EnableMsgEvents {
@@ -565,6 +565,7 @@ running:
 				name := truncateName(c.name)
 				log.Debug("Adding p2p peer", "id", c.id, "name", name, "addr", c.fd.RemoteAddr(), "peers", len(peers)+1)
 				peers[c.id] = p
+
 				go srv.runPeer(p)
 			}
 			// The dialer logic relies on the assumption that
@@ -579,6 +580,7 @@ running:
 			// A peer disconnected.
 			d := common.PrettyDuration(mclock.Now() - pd.created)
 			pd.log.Debug("Removing p2p peer", "duration", d, "peers", len(peers)-1, "req", pd.requested, "err", pd.err)
+
 			delete(peers, pd.ID())
 		}
 	}
@@ -616,8 +618,10 @@ func (srv *Server) protoHandshakeChecks(peers map[discover.NodeID]*Peer, c *conn
 
 func (srv *Server) encHandshakeChecks(peers map[discover.NodeID]*Peer, c *conn) error {
 	switch {
+	/*
 	case !c.is(trustedConn|staticDialedConn) && len(peers) >= srv.MaxPeers:
 		return DiscTooManyPeers
+	*/
 	case peers[c.id] != nil:
 		return DiscAlreadyConnected
 	case c.id == srv.Self().ID:

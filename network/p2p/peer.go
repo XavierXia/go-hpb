@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sort"
 	"sync"
 	"time"
 
@@ -49,15 +48,6 @@ const (
 	maxKnownBlocks   = 100000  // Maximum block hashes to keep in the known list (prevent DOS)  //for testnet
 )
 
-const (
-	// devp2p message codes
-	handshakeMsg = 0x00
-	discMsg      = 0x01
-	pingMsg      = 0x02
-	pongMsg      = 0x03
-	getPeersMsg  = 0x04
-	peersMsg     = 0x05
-)
 
 // protoHandshake is the RLP structure of the protocol handshake.
 type protoHandshake struct {
@@ -106,7 +96,9 @@ type PeerEvent struct {
 // Peer represents a connected remote node.
 type Peer struct {
 	rw      *conn
-	running map[string]*protoRW
+	//running map[string]*protoRW
+	running *protoRW
+	protorw MsgReadWriter
 	log     log.Logger
 	created mclock.AbsTime
 
@@ -132,9 +124,8 @@ type Peer struct {
 	head     common.Hash
 
 	bandwidth float32
-	//rw MsgReadWriter
 }
-
+/*
 // NewPeer returns a peer for testing purposes.
 func NewPeer(id discover.NodeID, name string, caps []Cap) *Peer {
 	pipe, _ := net.Pipe()
@@ -143,17 +134,21 @@ func NewPeer(id discover.NodeID, name string, caps []Cap) *Peer {
 	close(peer.closed) // ensures Disconnect doesn't block
 	return peer
 }
+*/
 
-func newPeer(conn *conn, protocols []Protocol) *Peer {
-	protomap := matchProtocols(protocols, conn.caps, conn)
+func newPeer(conn *conn, proto Protocol) *Peer {
+	//protomap := matchProtocols(protocols, conn.caps, conn)
+	protorw := &protoRW{Protocol: proto,in: make(chan Msg), w: conn}
 	p := &Peer{
 		rw:       conn,
-		running:  protomap,
+		running:  protorw,
 		created:  mclock.Now(),
 		disc:     make(chan DiscReason),
-		protoErr: make(chan error, len(protomap)+1), // protocols + pingLoop
+		protoErr: make(chan error, 1+1), // protocols + pingLoop
 		closed:   make(chan struct{}),
 		log:      log.New("id", conn.id, "conn", conn.flags),
+		knownTxs:     set.New(),
+		knownBlocks:  set.New(),
 	}
 	return p
 }
@@ -301,6 +296,7 @@ func (p *Peer) readLoop(errc chan<- error) {
 }
 
 func (p *Peer) handle(msg Msg) error {
+	log.Info("Peer handle massage","Msg",msg.String())
 	switch {
 	case msg.Code == pingMsg:
 		msg.Discard()
@@ -316,10 +312,13 @@ func (p *Peer) handle(msg Msg) error {
 		return msg.Discard()
 	default:
 		// it's a subprotocol message
-		proto, err := p.getProto(msg.Code)
+		proto := p.running
+		/*
+		//proto, err := p.getProto(msg.Code)
 		if err != nil {
 			return fmt.Errorf("msg code out of range: %v", msg.Code)
 		}
+		*/
 		select {
 		case proto.in <- msg:
 			return nil
@@ -343,7 +342,12 @@ func countMatchingProtocols(protocols []Protocol, caps []Cap) int {
 }
 
 // matchProtocols creates structures for matching named subprotocols.
-func matchProtocols(protocols []Protocol, caps []Cap, rw MsgReadWriter) map[string]*protoRW {
+func matchProtocols(proto Protocol, caps []Cap, rw MsgReadWriter) map[string]*protoRW {
+	result := make(map[string]*protoRW)
+	result[proto.Name] = &protoRW{Protocol: proto,in: make(chan Msg), w: rw}
+	return result
+
+	/*
 	sort.Sort(capsByNameAndVersion(caps))
 	offset := baseProtocolLength
 	result := make(map[string]*protoRW)
@@ -357,42 +361,43 @@ outer:
 					offset -= old.Length
 				}
 				// Assign the new match
+				log.Info("matchProtocols","proto",proto,"caps",caps,"offset",offset)
 				result[cap.Name] = &protoRW{Protocol: proto, offset: offset, in: make(chan Msg), w: rw}
 				offset += proto.Length
-
 				continue outer
 			}
 		}
 	}
 	return result
+	*/
 }
 
 func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error) {
-	p.wg.Add(len(p.running))
-	for _, proto := range p.running {
-		proto := proto
-		proto.closed = p.closed
-		proto.wstart = writeStart
-		proto.werr = writeErr
-		var rw MsgReadWriter = proto
-		if p.events != nil {
-			rw = newMsgEventer(rw, p.events, p.ID(), proto.Name)
-		}
-		p.log.Trace(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
-		go func() {
-			err := proto.Run(p, rw)
-			if err == nil {
-				p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
-				err = errProtocolReturned
-			} else if err != io.EOF {
-				p.log.Trace(fmt.Sprintf("Protocol %s/%d failed", proto.Name, proto.Version), "err", err)
-			}
-			p.protoErr <- err
-			p.wg.Done()
-		}()
+	//p.wg.Add(1)
+	//&protoRW{Protocol: proto, offset: offset, in: make(chan Msg), w: rw}
+	p.wg.Add(1)
+	proto := p.running
+	proto.closed = p.closed
+	proto.wstart = writeStart
+	proto.werr = writeErr
+	var rw MsgReadWriter = proto
+	if p.events != nil {
+		rw = newMsgEventer(rw, p.events, p.ID(), proto.Name)
 	}
+	p.log.Trace(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
+	go func() {
+		err := proto.Run(p, rw)
+		if err == nil {
+			p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
+			err = errProtocolReturned
+		} else if err != io.EOF {
+			p.log.Trace(fmt.Sprintf("Protocol %s/%d failed", proto.Name, proto.Version), "err", err)
+		}
+		p.protoErr <- err
+		p.wg.Done()
+	}()
 }
-
+/*
 // getProto finds the protocol responsible for handling
 // the given message code.
 func (p *Peer) getProto(code uint64) (*protoRW, error) {
@@ -403,6 +408,7 @@ func (p *Peer) getProto(code uint64) (*protoRW, error) {
 	}
 	return nil, newPeerError(errInvalidMsgCode, "%d", code)
 }
+*/
 
 type protoRW struct {
 	Protocol
@@ -410,15 +416,16 @@ type protoRW struct {
 	closed <-chan struct{} // receives when peer is shutting down
 	wstart <-chan struct{} // receives when write may start
 	werr   chan<- error    // for write results
-	offset uint64
 	w      MsgWriter
 }
 
 func (rw *protoRW) WriteMsg(msg Msg) (err error) {
+	/*
 	if msg.Code >= rw.Length {
 		return newPeerError(errInvalidMsgCode, "not handled")
 	}
 	msg.Code += rw.offset
+	*/
 	select {
 	case <-rw.wstart:
 		err = rw.w.WriteMsg(msg)
@@ -426,6 +433,9 @@ func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 		// shutdown if the error is non-nil and unblock the next write
 		// otherwise. The calling protocol code should exit for errors
 		// as well but we don't want to rely on that.
+		if err != nil{
+			log.Info("protoRW WriteMsg","error",err)
+		}
 		rw.werr <- err
 	case <-rw.closed:
 		err = fmt.Errorf("shutting down")
@@ -436,7 +446,8 @@ func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 func (rw *protoRW) ReadMsg() (Msg, error) {
 	select {
 	case msg := <-rw.in:
-		msg.Code -= rw.offset
+		//msg.Code -= rw.offset
+		log.Info("protoRW ReadMsg","Msg",msg)
 		return msg, nil
 	case <-rw.closed:
 		return Msg{}, io.EOF
@@ -477,22 +488,23 @@ func (p *Peer) Info() *PeerInfo {
 	info.Network.RemoteAddress = p.RemoteAddr().String()
 
 	// Gather all the running protocol infos
-	for _, proto := range p.running {
-		protoInfo := interface{}("unknown")
-		if query := proto.Protocol.PeerInfo; query != nil {
-			if metadata := query(p.ID()); metadata != nil {
-				protoInfo = metadata
-			} else {
-				protoInfo = "handshake"
-			}
+	proto := p.running
+	protoInfo := interface{}("unknown")
+	if query := proto.Protocol.PeerInfo; query != nil {
+		if metadata := query(p.ID()); metadata != nil {
+			protoInfo = metadata
+		} else {
+			protoInfo = "handshake"
 		}
-		info.Protocols[proto.Name] = protoInfo
 	}
+	info.Protocols[proto.Name] = protoInfo
+
 	return info
 }
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // statusData is the network packet for the status message.
 type statusData struct {
 	ProtocolVersion uint32

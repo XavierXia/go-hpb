@@ -21,6 +21,7 @@ import (
 	"errors"
 	"math/big"
 	"github.com/hpb-project/ghpb/common"
+	"github.com/hpb-project/ghpb/common/log"
 )
 
 
@@ -35,47 +36,58 @@ type PeerManager struct {
 	peers  map[string]*Peer
 	closed bool
 
-	//protocols []p2p.Protocol
+	server  *Server
+	hpb     *Protocol
 }
 
-var m *PeerManager
+var pm *PeerManager
 var lock *sync.Mutex = &sync.Mutex {}
 
-func PMInstance() *PeerManager {
+func PeerMgrInst() *PeerManager {
 	lock.Lock()
 	defer lock.Unlock()
-	if m == nil {
-		m ,_ = NewPeerManager()
+	if pm == nil {
+		pm =&PeerManager{
+			peers:   make(map[string]*Peer),
+		}
 	}
-	return m
+	return pm
 }
 
-//
-func NewPeerManager() (*PeerManager,error) {
+func (prm *PeerManager)Start() error {
+	hpb ,err := NewProtos()
+	if err != nil {
+		log.Error("PeerManager hpb protocol build","error",err)
+		return err
+	}
+	log.Info("Hpb protocol","Hpb",hpb.Protocols())
 
-	pm :=&PeerManager{
-		peers: make(map[string]*Peer),
+	prm.hpb = hpb
+
+	prm.server = &Server{
+		//Config:       config,
 	}
 
-	return pm,nil
+	if err := prm.server.Start(); err != nil {
+		log.Error("Hpb protocol","error",err)
+		return err
+	}
 
+	return nil
 
 }
 
-func (peermgr *PeerManager)Start(){
+func (prm *PeerManager)Stop(){
 
-}
-
-func (peermgr *PeerManager)Stop(){
+	prm.server.Stop()
+	prm.server = nil
 
 }
 
 //接口定义
-
-
 // Register injects a new peer into the working set, or returns an error if the
 // peer is already known.
-func (prm *PeerManager) register(p *Peer) error {
+func (prm *PeerManager) Register(p *Peer) error {
 	prm.lock.Lock()
 	defer prm.lock.Unlock()
 
@@ -91,7 +103,7 @@ func (prm *PeerManager) register(p *Peer) error {
 
 // Unregister removes a remote peer from the active set, disabling any further
 // actions to/from that particular entity.
-func (prm *PeerManager) unregister(id string) error {
+func (prm *PeerManager) Unregister(id string) error {
 	prm.lock.Lock()
 	defer prm.lock.Unlock()
 
