@@ -22,10 +22,10 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/hpb-project/go-hpb/boe"
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/crypto"
 	"github.com/hpb-project/go-hpb/config"
+	"github.com/hpb-project/go-hpb/boe"
 )
 
 var (
@@ -176,7 +176,7 @@ func recoverPlain(sighash common.Hash, R, S, Vb *big.Int) (common.Address, error
 	// recover the public key from the snature
 	//pub, err := crypto.Ecrecover(sighash[:], sig)
 	//64 bytes public key returned.
-	pub, err := BOE.BoeGetInstance().ValidateSign(sighash[:], r, s, V)
+	pub, err := boe.BoeGetInstance().ValidateSign(sighash[:], r, s, V)
 	//xInt, yInt := elliptic.Unmarshal(crypto.S256(), result)
 	//pub := &ecdsa.PublicKey{Curve: crypto.S256(), X: xInt, Y: yInt}
 	if err != nil {
