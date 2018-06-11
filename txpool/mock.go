@@ -1,33 +1,31 @@
 package txpool
 
 import (
-	"github.com/hpb-project/ghpb/core"
-	"github.com/hpb-project/ghpb/storage"
-	"github.com/hpb-project/ghpb/common/constant"
-	"math/big"
-	"github.com/hpb-project/ghpb/consensus/prometheus"
-	"github.com/hpb-project/ghpb/core/vm"
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/core/types"
-	"path/filepath"
-	"io/ioutil"
-	"os"
 	"github.com/hpb-project/go-hpb/account"
 	"github.com/hpb-project/go-hpb/account/keystore"
-	"github.com/hpb-project/ghpb/common/crypto"
+	"github.com/hpb-project/go-hpb/common/crypto"
+	"github.com/hpb-project/go-hpb/config"
+	"github.com/hpb-project/go-hpb/consensus/solo"
+	"github.com/hpb-project/go-hpb/core"
+	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/storage/state"
+	"github.com/hpb-project/go-hpb/types"
+	"io/ioutil"
+	"math/big"
+	"os"
+	"path/filepath"
 )
 
 var (
-	testdb, _    = hpbdb.NewMemDatabase()
-	testKey, _   = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-	testAddress  = crypto.PubkeyToAddress(testKey.PublicKey)
-	genesis      = core.GenesisBlockForTesting(testdb, testAddress, big.NewInt(1000000000))
+	testdb, _   = hpbdb.NewMemDatabase()
+	testKey, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	testAddress = crypto.PubkeyToAddress(testKey.PublicKey)
+	genesis     = core.GenesisBlockForTesting(testdb, testAddress, big.NewInt(1000000000))
 )
 
-
 func MockBlockChain() *core.BlockChain {
-	engine := prometheus.New(params.TestnetChainConfig.Prometheus, testdb)
-	blockchain, err := core.NewBlockChain(testdb, params.TestnetChainConfig, engine, vm.Config{})
+	engine := solo.New()
+	blockchain, err := core.NewBlockChain(testdb, config.TestnetChainConfig, engine)
 	if err != nil {
 		panic(err)
 	}
@@ -41,7 +39,7 @@ func (bproc) ValidateBody(*types.Block) error { return nil }
 func (bproc) ValidateState(block, parent *types.Block, state *state.StateDB, receipts types.Receipts, usedGas *big.Int) error {
 	return nil
 }
-func (bproc) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, *big.Int, error) {
+func (bproc) Process(block *types.Block, statedb *state.StateDB) (types.Receipts, []*types.Log, *big.Int, error) {
 	return nil, nil, new(big.Int), nil
 }
 

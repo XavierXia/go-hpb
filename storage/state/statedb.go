@@ -24,11 +24,11 @@ import (
 	"sync"
 
 	"github.com/hpb-project/go-hpb/common"
-	"github.com/hpb-project/go-hpb/blockchain/types"
 	"github.com/hpb-project/go-hpb/common/crypto"
 	"github.com/hpb-project/go-hpb/common/log"
 	"github.com/hpb-project/go-hpb/common/rlp"
 	"github.com/hpb-project/go-hpb/common/trie"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 type revision struct {

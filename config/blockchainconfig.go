@@ -14,18 +14,15 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-
 package config
 
 import (
-	"math/big"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/hpb-project/go-hpb/common"
 )
-
-
 
 var (
 	MainnetGenesisHash = common.HexToHash("0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3") // Mainnet genesis hash to enforce below configs on
@@ -67,29 +64,28 @@ var (
 	}
 )
 
-
 //同步控制逻辑参数
 const (
-	forceSyncCycle      = 10 * time.Second //区块同步周期时间
-	txChanSize          = 20000            //接收交易事件缓冲，等待广播
+	forceSyncCycle = 10 * time.Second //区块同步周期时间
+	txChanSize     = 20000            //接收交易事件缓冲，等待广播
 	// This is the target size for the packs of transactions sent by txsyncLoop.
 	// A pack can get larger than this if a single transactions exceeds this size.
-	txsyncPackSize = 100 * 1024            // 一般情况下状态包的大小，为了减小发送次数
+	txsyncPackSize = 100 * 1024 // 一般情况下状态包的大小，为了减小发送次数
 )
 
 //同步peer的记忆配置
 const (
 	//记忆peer的最大交易数量
-	maxKnownTxs      = 1000000 // Maximum transactions hashes to keep in the known list (prevent DOS) //记忆peer的最大区块数量
-	maxKnownBlocks   = 100000  // Maximum block hashes to keep in the known list (prevent DOS)
+	maxKnownTxs    = 1000000 // Maximum transactions hashes to keep in the known list (prevent DOS) //记忆peer的最大区块数量
+	maxKnownBlocks = 100000  // Maximum block hashes to keep in the known list (prevent DOS)
 )
 
 //同步对peer的配置
 const (
 	//同步的peer最大允许缺少hash项
-	maxLackingHashes  = 4096 // Maximum number of entries allowed on the list or lacking items
+	maxLackingHashes = 4096 // Maximum number of entries allowed on the list or lacking items
 	//计算吞吐量的一个参数
-	measurementImpact = 0.1  // The impact a single measurement has on a peer's final throughput value.
+	measurementImpact = 0.1 // The impact a single measurement has on a peer's final throughput value.
 )
 
 //同步任务队列最大缓冲区块数
@@ -118,11 +114,11 @@ var (
 	MaxStateFetch   = 384 // Amount of node state values to allow fetching per request
 
 	MaxForkAncestry  = 3 * EpochDuration // Maximum chain reorganisation
-	rttMinEstimate   = 2 * time.Second          // Minimum round-trip time to target for sync requests
-	rttMaxEstimate   = 20 * time.Second         // Maximum rount-trip time to target for sync requests
-	rttMinConfidence = 0.1                      // Worse confidence factor in our estimated RTT value
-	ttlScaling       = 3                        // Constant scaling factor for RTT -> TTL conversion
-	ttlLimit         = time.Minute              // Maximum TTL allowance to prevent reaching crazy timeouts
+	rttMinEstimate   = 2 * time.Second   // Minimum round-trip time to target for sync requests
+	rttMaxEstimate   = 20 * time.Second  // Maximum rount-trip time to target for sync requests
+	rttMinConfidence = 0.1               // Worse confidence factor in our estimated RTT value
+	ttlScaling       = 3                 // Constant scaling factor for RTT -> TTL conversion
+	ttlLimit         = time.Minute       // Maximum TTL allowance to prevent reaching crazy timeouts
 
 	qosTuningPeers   = 5    // Number of peers to tune based on (best peers)
 	qosConfidenceCap = 10   // Number of peers above which not to modify RTT confidence
@@ -139,6 +135,7 @@ var (
 	fsMinFullBlocks        = 64         // Number of blocks to retrieve fully even in fast sync
 	fsCriticalTrials       = uint32(32) // Number of times to retry in the cricical section before bailing
 )
+
 type ChainConfig struct {
 	ChainId *big.Int `json:"chainId"` // Chain id identifies the current chain and is used for replay protection
 
@@ -146,21 +143,20 @@ type ChainConfig struct {
 }
 
 var DefaultBlockChainConfig = ChainConfig{
-	ChainId: MainnetChainConfig.ChainId,
+	ChainId:    MainnetChainConfig.ChainId,
 	Prometheus: DefaultPrometheusConfig,
 }
 
 var (
 	GasLimitBoundDivisor   = big.NewInt(1024)                  // The bound divisor of the gas limit, used in update calculations.
 	MinGasLimit            = big.NewInt(5000)                  // Minimum the gas limit may ever be.
-	GenesisGasLimit        = big.NewInt(100000000)               // Gas limit of the Genesis block. //for testnet
+	GenesisGasLimit        = big.NewInt(100000000)             // Gas limit of the Genesis block. //for testnet
 	TargetGasLimit         = new(big.Int).Set(GenesisGasLimit) // The artificial target
 	DifficultyBoundDivisor = big.NewInt(2048)                  // The bound divisor of the difficulty, used in the update calculations.
 	GenesisDifficulty      = big.NewInt(131072)                // Difficulty of the Genesis block.
 	MinimumDifficulty      = big.NewInt(131072)                // The minimum that the difficulty may ever be.
 	DurationLimit          = big.NewInt(13)                    // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
 )
-
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
 // with a mismatching chain configuration.
@@ -192,6 +188,10 @@ type ConfigCompatError struct {
 	StoredConfig, NewConfig *big.Int
 	// the block number to which the local chain must be rewound to correct the error
 	RewindTo uint64
+}
+
+func (err *ConfigCompatError) Error() string {
+	return fmt.Sprintf("mismatching %s in database (have %d, want %d, rewindto %d)", err.What, err.StoredConfig, err.NewConfig, err.RewindTo)
 }
 
 // GasTable returns the gas table corresponding to the current phase (homestead or homestead reprice).

@@ -20,16 +20,15 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/common/math"
-	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/go-hpb/txpool"
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/hvm/native"
-	"github.com/hpb-project/go-hpb/hvm/evm"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/common/math"
+	"github.com/hpb-project/go-hpb/config"
 	"github.com/hpb-project/go-hpb/hvm"
+	"github.com/hpb-project/go-hpb/hvm/evm"
+	"github.com/hpb-project/go-hpb/hvm/native"
+	"github.com/hpb-project/go-hpb/storage/state"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 var (
@@ -106,7 +105,7 @@ func ApplyMessage(bc *BlockChain, header *types.Header, db *state.StateDB, autho
 
 	contractCreation := msg.To() == nil
 	// Pay intrinsic gas
-	intrinsicGas := txpool.IntrinsicGas(st.data, contractCreation)
+	intrinsicGas := types.IntrinsicGas(st.data, contractCreation)
 	if intrinsicGas.BitLen() > 64 {
 		return nil, nil, false, evm.ErrOutOfGas
 	}
@@ -192,7 +191,7 @@ func (st *StateTransition) preCheck() error {
 		if nonce < msg.Nonce() {
 			return ErrNonceTooHigh
 		} else if nonce > msg.Nonce() {
-			return txpool.ErrNonceTooLow
+			return ErrNonceTooLow
 		}
 	}
 	return st.buyGas()
@@ -235,7 +234,7 @@ func (st *StateTransition) TransitionOnEVM() (ret []byte, requiredGas, usedGas *
 	context := hvm.NewEVMContext(st.msg, st.header, st.blockChain, st.author)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
-	ethereum_vm := evm.NewEVM(context, st.state, params.TestnetChainConfig, evm.Config{})
+	ethereum_vm := evm.NewEVM(context, st.state, config.TestnetChainConfig, evm.Config{})
 
 	msg := st.msg
 	sender := st.from() // err checked in preCheck

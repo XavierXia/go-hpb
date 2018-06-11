@@ -17,20 +17,20 @@
 package txpool
 
 import (
-	"sync"
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/core/state"
-	"math/big"
-	"time"
-	"github.com/hpb-project/ghpb/common/log"
-	"math"
 	"fmt"
-	"github.com/hpb-project/ghpb/common/constant"
-	"sync/atomic"
-	"gopkg.in/karalabe/cookiejar.v2/collections/prque"
-	"sort"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/config"
 	"github.com/hpb-project/go-hpb/event"
+	"github.com/hpb-project/go-hpb/storage/state"
 	"github.com/hpb-project/go-hpb/types"
+	"gopkg.in/karalabe/cookiejar.v2/collections/prque"
+	"math"
+	"math/big"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // TxPoolConfig are the configuration parameters of the transaction pool.
@@ -116,7 +116,7 @@ type TxPool struct {
 }
 
 //Create the transaction pool and start main process loop.
-func NewTxPool(config TxPoolConfig, chainConfig *params.ChainConfig, blockChain blockChain) *TxPool {
+func NewTxPool(config TxPoolConfig, chainConfig *config.ChainConfig, blockChain blockChain) *TxPool {
 	if INSTANCE.Load() != nil {
 		return INSTANCE.Load().(*TxPool)
 	}
@@ -485,42 +485,16 @@ func (pool *TxPool) validateTx(tx *types.Transaction) error {
 	}
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
+	fmt.Println(pool.currentState.GetBalance(from))
+	fmt.Println(tx.Cost())
 	if pool.currentState.GetBalance(from).Cmp(tx.Cost()) < 0 {
 		return ErrInsufficientFunds
 	}
-	intrGas := IntrinsicGas(tx.Data(), tx.To() == nil)
+	intrGas := types.IntrinsicGas(tx.Data(), tx.To() == nil)
 	if tx.Gas().Cmp(intrGas) < 0 {
 		return ErrIntrinsicGas
 	}
 	return nil
-}
-
-// IntrinsicGas computes the 'intrinsic gas' for a message
-// with the given data.
-//
-// TODO convert to uint64
-func IntrinsicGas(data []byte, contractCreation bool) *big.Int {
-	igas := new(big.Int)
-	if contractCreation {
-		igas.SetUint64(params.TxGasContractCreation)
-	} else {
-		igas.SetUint64(params.TxGas)
-	}
-	if len(data) > 0 {
-		var nz int64
-		for _, byt := range data {
-			if byt != 0 {
-				nz++
-			}
-		}
-		m := big.NewInt(nz)
-		m.Mul(m, new(big.Int).SetUint64(params.TxDataNonZeroGas))
-		igas.Add(igas, m)
-		m.SetInt64(int64(len(data)) - nz)
-		m.Mul(m, new(big.Int).SetUint64(params.TxDataZeroGas))
-		igas.Add(igas, m)
-	}
-	return igas
 }
 
 // enqueueTx inserts a new transaction into the non-executable transaction queue.

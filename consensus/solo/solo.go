@@ -5,13 +5,13 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/core/state"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/storage/state"
 
-	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/consensus"
 	"github.com/hpb-project/ghpb/network/rpc"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/consensus"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 // Solo protocol constants.
@@ -40,8 +40,7 @@ type Solo struct {
 }
 
 func New() *Solo {
-	return &Solo{
-	}
+	return &Solo{}
 }
 
 func (c *Solo) Author(header *types.Header) (common.Address, error) {
@@ -113,7 +112,6 @@ func (c *Solo) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan
 	return block.WithSeal(header), nil
 }
 
-func (c *Solo) APIs(chain consensus.ChainReader) ([]rpc.API)  {
-	return []rpc.API{
-	}
+func (c *Solo) APIs(chain consensus.ChainReader) []rpc.API {
+	return []rpc.API{}
 }

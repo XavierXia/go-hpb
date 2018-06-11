@@ -24,12 +24,13 @@ import (
 	"math/big"
 	"sync/atomic"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/common/hexutil"
-	"github.com/hpb-project/ghpb/common/crypto"
-	"github.com/hpb-project/ghpb/common/rlp"
 	"encoding/json"
-	"github.com/hpb-project/ghpb/common/crypto/sha3"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/crypto"
+	"github.com/hpb-project/go-hpb/common/crypto/sha3"
+	"github.com/hpb-project/go-hpb/common/hexutil"
+	"github.com/hpb-project/go-hpb/common/rlp"
+	"github.com/hpb-project/go-hpb/config"
 )
 
 //go:generate gencodec -type txdata -field-override txdataMarshaling -out gen_tx_json.go
@@ -54,9 +55,9 @@ func deriveSigner(V *big.Int) Signer {
 type Transaction struct {
 	data txdata
 	// caches
-	hash atomic.Value
-	size atomic.Value
-	from atomic.Value
+	hash    atomic.Value
+	size    atomic.Value
+	from    atomic.Value
 	fromP2P bool
 }
 
@@ -157,6 +158,34 @@ func (tx *Transaction) DecodeRLP(s *rlp.Stream) error {
 	}
 
 	return err
+}
+
+// IntrinsicGas computes the 'intrinsic gas' for a message
+// with the given data.
+//
+// TODO convert to uint64
+func IntrinsicGas(data []byte, contractCreation bool) *big.Int {
+	igas := new(big.Int)
+	if contractCreation {
+		igas.SetUint64(config.TxGasContractCreation)
+	} else {
+		igas.SetUint64(config.TxGas)
+	}
+	if len(data) > 0 {
+		var nz int64
+		for _, byt := range data {
+			if byt != 0 {
+				nz++
+			}
+		}
+		m := big.NewInt(nz)
+		m.Mul(m, new(big.Int).SetUint64(config.TxDataNonZeroGas))
+		igas.Add(igas, m)
+		m.SetInt64(int64(len(data)) - nz)
+		m.Mul(m, new(big.Int).SetUint64(config.TxDataZeroGas))
+		igas.Add(igas, m)
+	}
+	return igas
 }
 
 func (t txdata) MarshalJSON() ([]byte, error) {
@@ -277,10 +306,12 @@ func (tx *Transaction) GasPrice() *big.Int { return new(big.Int).Set(tx.data.Pri
 func (tx *Transaction) Value() *big.Int    { return new(big.Int).Set(tx.data.Amount) }
 func (tx *Transaction) Nonce() uint64      { return tx.data.AccountNonce }
 func (tx *Transaction) CheckNonce() bool   { return true }
+
 //TODO for test use
-func (tx *Transaction) SetFrom(from common.Address)   { tx.from.Store(from) }
-func (tx *Transaction) SetFromP2P(fromP2P bool)   { tx.fromP2P = fromP2P }
-func (tx *Transaction) IsFromP2P() bool   { return tx.fromP2P}
+func (tx *Transaction) SetFrom(from common.Address) { tx.from.Store(from) }
+func (tx *Transaction) SetFromP2P(fromP2P bool)     { tx.fromP2P = fromP2P }
+func (tx *Transaction) IsFromP2P() bool             { return tx.fromP2P }
+
 // To returns the recipient address of the transaction.
 // It returns nil if the transaction is a contract creation.
 func (tx *Transaction) To() *common.Address {

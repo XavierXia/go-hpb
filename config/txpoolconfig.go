@@ -14,12 +14,9 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-hpb. If not, see <http://www.gnu.org/licenses/>.
 
-
 package config
 
 import "time"
-
-
 
 type TxPoolConfiguration struct {
 	NoLocals  bool          // Whether local transaction handling should be disabled
@@ -37,7 +34,6 @@ type TxPoolConfiguration struct {
 	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued
 }
 
-
 var DefaultTxPoolConfig = TxPoolConfiguration{
 	Journal:   "transactions.rlp",
 	Rejournal: time.Hour,
@@ -52,4 +48,3 @@ var DefaultTxPoolConfig = TxPoolConfiguration{
 
 	Lifetime: 3 * time.Hour,
 }
-

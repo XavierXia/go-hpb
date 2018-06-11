@@ -1,23 +1,23 @@
 package txpool
 
 import (
-	"testing"
-	"github.com/hpb-project/ghpb/common/hexutil"
-	"math/big"
-	"github.com/btcsuite/btcd/btcjson"
 	"fmt"
-	"github.com/hpb-project/go-hpb/account/keystore"
+	"github.com/btcsuite/btcd/btcjson"
 	"github.com/hpb-project/go-hpb/account"
-	"github.com/hpb-project/ghpb/storage"
-	"github.com/hpb-project/ghpb/common/crypto"
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/ghpb/common"
+	"github.com/hpb-project/go-hpb/account/keystore"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/crypto"
+	"github.com/hpb-project/go-hpb/common/hexutil"
+	"github.com/hpb-project/go-hpb/config"
+	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/storage/state"
+	"math/big"
+	"testing"
 )
 
 func prepare() (*keystore.KeyStore, *TxPool) {
 	am, _, _ := MockAccountManager(false, "", "")
-	ks := am.Backends(keystore.KeyStoreType)[0].(*keystore.KeyStore)
+	ks := am.KeyStore()
 	var (
 		db, _      = hpbdb.NewMemDatabase()
 		key, _     = crypto.GenerateKey()
@@ -27,10 +27,10 @@ func prepare() (*keystore.KeyStore, *TxPool) {
 	)
 
 	// setup pool with 2 transaction in it
-	statedb.SetBalance(address, new(big.Int).SetUint64(params.Ether))
+	statedb.SetBalance(address, new(big.Int).SetUint64(config.Ether))
 	blockchain := &testChain{&testBlockChain{statedb, big.NewInt(1000000000)}, address, &trigger}
-	pool := NewTxPool(testTxPoolConfig, params.TestnetChainConfig, blockchain)
-	return ks, pool
+	pool := NewTxPool(testTxPoolConfig, config.TestnetChainConfig, blockchain)
+	return ks.(*keystore.KeyStore), pool
 }
 
 func TestSubmitTx(t *testing.T) {

@@ -19,7 +19,7 @@ package core
 import (
 	"math/big"
 
-	"github.com/hpb-project/ghpb/core/state"
+	"github.com/hpb-project/go-hpb/storage/state"
 	"github.com/hpb-project/go-hpb/types"
 )
 

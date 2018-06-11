@@ -27,20 +27,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/common/mclock"
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/common/crypto"
-	"github.com/hpb-project/ghpb/storage"
-	"github.com/hpb-project/ghpb/core/event"
-	"github.com/hpb-project/ghpb/common/log"
-	"github.com/hpb-project/ghpb/metrics"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/ghpb/common/rlp"
-	"github.com/hpb-project/ghpb/common/trie"
 	"github.com/hashicorp/golang-lru"
-	"github.com/hpb-project/go-hpb/types"
+	"github.com/hpb-project/ghpb/core/event"
+	"github.com/hpb-project/ghpb/metrics"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/crypto"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/common/mclock"
+	"github.com/hpb-project/go-hpb/common/rlp"
+	"github.com/hpb-project/go-hpb/common/trie"
+	"github.com/hpb-project/go-hpb/config"
 	"github.com/hpb-project/go-hpb/consensus"
+	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/storage/state"
+	"github.com/hpb-project/go-hpb/types"
 )
 
 var (
@@ -75,7 +75,7 @@ const (
 // included in the canonical one where as GetBlockByNumber always represents the
 // canonical chain.
 type BlockChain struct {
-	config *params.ChainConfig // chain & network configuration
+	config *config.ChainConfig // chain & network configuration
 
 	hc            *HeaderChain
 	chainDb       hpbdb.Database
@@ -118,7 +118,7 @@ type BlockChain struct {
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Hpb Validator and
 // Processor.
-func NewBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine consensus.Engine) (*BlockChain, error) {
+func NewBlockChain(chainDb hpbdb.Database, config *config.ChainConfig, engine consensus.Engine) (*BlockChain, error) {
 	bodyCache, _ := lru.New(bodyCacheLimit)
 	bodyRLPCache, _ := lru.New(bodyCacheLimit)
 	blockCache, _ := lru.New(blockCacheLimit)
@@ -136,7 +136,7 @@ func NewBlockChain(chainDb hpbdb.Database, config *params.ChainConfig, engine co
 		futureBlocks: futureBlocks,
 		engine:       engine,
 		//vmConfig:     vmConfig,
-		badBlocks:    badBlocks,
+		badBlocks: badBlocks,
 	}
 	bc.SetValidator(NewBlockValidator(config, bc, engine))
 	bc.SetProcessor(NewStateProcessor(config, bc, engine))
@@ -646,7 +646,7 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 }
 
 // SetReceiptsData computes all the non-consensus fields of the receipts
-func SetReceiptsData(config *params.ChainConfig, block *types.Block, receipts types.Receipts) {
+func SetReceiptsData(config *config.ChainConfig, block *types.Block, receipts types.Receipts) {
 	signer := types.MakeSigner(config)
 
 	transactions, logIndex := block.Transactions(), uint(0)
@@ -783,7 +783,7 @@ func (bc *BlockChain) WriteBlockAndState(block *types.Block, receipts []*types.R
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-    //获取本地的
+	//获取本地的
 	localTd := bc.GetTd(bc.currentBlock.Hash(), bc.currentBlock.NumberU64())
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
 
@@ -958,7 +958,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			return i, events, coalescedLogs, err
 		}
 		// Write the block to the chain and get the status.
-		log.Info("----> Write Block and State From Outside", "number", block.Number(), "hash", block.Hash(),"difficulty",block.Difficulty())
+		log.Info("----> Write Block and State From Outside", "number", block.Number(), "hash", block.Hash(), "difficulty", block.Difficulty())
 		status, err := bc.WriteBlockAndState(block, receipts, state)
 		if err != nil {
 			return i, events, coalescedLogs, err
@@ -969,7 +969,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 				"txs", len(block.Transactions()), "gas", block.GasUsed(), "elapsed", common.PrettyDuration(time.Since(bstart)))
 
 			log.Info("Inserted new block", "number", block.Number(), "hash", block.Hash())
-			
+
 			coalescedLogs = append(coalescedLogs, logs...)
 			blockInsertTimer.UpdateSince(bstart)
 			events = append(events, ChainEvent{block, block.Hash(), logs})
@@ -986,9 +986,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		stats.usedGas += usedGas.Uint64()
 		stats.report(chain, i)
 	}
-	
-	
-	
+
 	// Append a single chain head event if we've progressed the chain
 	if lastCanon != nil && bc.LastBlockHash() == lastCanon.Hash() {
 		events = append(events, ChainHeadEvent{lastCanon})
@@ -1344,10 +1342,8 @@ func (bc *BlockChain) GetRandom() string {
 	return bc.hc.GetRandom()
 }
 
-
-
 // Config retrieves the blockchain's chain configuration.
-func (bc *BlockChain) Config() *params.ChainConfig { return bc.config }
+func (bc *BlockChain) Config() *config.ChainConfig { return bc.config }
 
 // Engine retrieves the blockchain's consensus engine.
 func (bc *BlockChain) Engine() consensus.Engine { return bc.engine }

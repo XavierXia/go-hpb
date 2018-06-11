@@ -24,12 +24,12 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/storage"
-	"github.com/hpb-project/ghpb/common/log"
 	"github.com/hpb-project/ghpb/metrics"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/ghpb/common/rlp"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/log"
+	"github.com/hpb-project/go-hpb/common/rlp"
+	"github.com/hpb-project/go-hpb/config"
+	"github.com/hpb-project/go-hpb/storage"
 	"github.com/hpb-project/go-hpb/types"
 )
 
@@ -49,18 +49,17 @@ var (
 	headFastKey   = []byte("LastFast")
 
 	// Data item prefixes (use single byte to avoid mixing data types, avoid `i`).
-	headerPrefix        = []byte("h") // headerPrefix + num (uint64 big endian) + hash -> header
-	tdSuffix            = []byte("t") // headerPrefix + num (uint64 big endian) + hash + tdSuffix -> td
-	numSuffix           = []byte("n") // headerPrefix + num (uint64 big endian) + numSuffix -> hash
-	blockHashPrefix     = []byte("H") // blockHashPrefix + hash -> num (uint64 big endian)
-	bodyPrefix          = []byte("b") // bodyPrefix + num (uint64 big endian) + hash -> block body
-	blockReceiptsPrefix = []byte("r") // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
-	lookupPrefix        = []byte("l") // lookupPrefix + hash -> transaction/receipt lookup metadata
-	bloomBitsPrefix     = []byte("B") // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
+	headerPrefix        = []byte("h")      // headerPrefix + num (uint64 big endian) + hash -> header
+	tdSuffix            = []byte("t")      // headerPrefix + num (uint64 big endian) + hash + tdSuffix -> td
+	numSuffix           = []byte("n")      // headerPrefix + num (uint64 big endian) + numSuffix -> hash
+	blockHashPrefix     = []byte("H")      // blockHashPrefix + hash -> num (uint64 big endian)
+	bodyPrefix          = []byte("b")      // bodyPrefix + num (uint64 big endian) + hash -> block body
+	blockReceiptsPrefix = []byte("r")      // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
+	lookupPrefix        = []byte("l")      // lookupPrefix + hash -> transaction/receipt lookup metadata
+	bloomBitsPrefix     = []byte("B")      // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
 	randomPrefix        = []byte("random") // randomPrefix + num (uint64 big endian) + hash -> header
 
-
-	preimagePrefix = "secure-key-"              // preimagePrefix + hash -> preimage
+	preimagePrefix = "secure-key-"         // preimagePrefix + hash -> preimage
 	configPrefix   = []byte("hpb-config-") // config prefix for the db
 
 	// Chain index prefixes (use `i` + single byte to avoid mixing data types).
@@ -103,7 +102,7 @@ func GetCanonicalHash(db DatabaseReader, number uint64) common.Hash {
 // GetRandom
 func GetRandom(db DatabaseReader) string {
 	data, _ := db.Get(randomPrefix)
-	
+
 	if len(data) == 0 {
 		return ""
 	}
@@ -117,8 +116,6 @@ func WriteRandom(db hpbdb.Putter, rand string) error {
 	}
 	return nil
 }
-
-
 
 // missingNumber is returned by GetBlockNumber if no header with the
 // given block hash has been stored in the database
@@ -597,7 +594,7 @@ func WriteBlockChainVersion(db hpbdb.Putter, vsn int) {
 }
 
 // WriteChainConfig writes the chain config settings to the database.
-func WriteChainConfig(db hpbdb.Putter, hash common.Hash, cfg *params.ChainConfig) error {
+func WriteChainConfig(db hpbdb.Putter, hash common.Hash, cfg *config.ChainConfig) error {
 	// short circuit and ignore if nil config. GetChainConfig
 	// will return a default.
 	if cfg == nil {
@@ -613,13 +610,13 @@ func WriteChainConfig(db hpbdb.Putter, hash common.Hash, cfg *params.ChainConfig
 }
 
 // GetChainConfig will fetch the network settings based on the given hash.
-func GetChainConfig(db DatabaseReader, hash common.Hash) (*params.ChainConfig, error) {
+func GetChainConfig(db DatabaseReader, hash common.Hash) (*config.ChainConfig, error) {
 	jsonChainConfig, _ := db.Get(append(configPrefix, hash[:]...))
 	if len(jsonChainConfig) == 0 {
 		return nil, ErrChainConfigNotFound
 	}
 
-	var config params.ChainConfig
+	var config config.ChainConfig
 	if err := json.Unmarshal(jsonChainConfig, &config); err != nil {
 		return nil, err
 	}

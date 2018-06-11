@@ -22,11 +22,10 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/ghpb/common/crypto"
-	"reflect"
 	"github.com/hpb-project/go-hpb/boe"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/common/crypto"
+	"github.com/hpb-project/go-hpb/config"
 )
 
 var (
@@ -41,7 +40,7 @@ type sigCache struct {
 }
 
 // MakeSigner returns a Signer based on the given chain config and block number.
-func MakeSigner(config *params.ChainConfig) Signer {
+func MakeSigner(config *config.ChainConfig) Signer {
 	return NewBoeSigner(config.ChainId)
 }
 
@@ -63,9 +62,9 @@ func SignTx(tx *Transaction, s Signer, prv *ecdsa.PrivateKey) (*Transaction, err
 // signing method. The cache is invalidated if the cached signer does
 // not match the signer used in the current call.
 func Sender(signer Signer, tx *Transaction) (common.Address, error) {
-	if (tx.from.Load() != nil && reflect.TypeOf(tx.from.Load()) == reflect.TypeOf(common.Address{}) && tx.from.Load().(common.Address) != common.Address{}) {
-		return tx.from.Load().(common.Address), nil
-	}
+	//if (tx.from.Load() != nil && reflect.TypeOf(tx.from.Load()) == reflect.TypeOf(common.Address{}) && tx.from.Load().(common.Address) != common.Address{}) {
+	//	return tx.from.Load().(common.Address), nil
+	//}
 	if sc := tx.from.Load(); sc != nil {
 		sigCache := sc.(sigCache)
 		// If the signer used to derive from in a previous
@@ -177,13 +176,13 @@ func recoverPlain(sighash common.Hash, R, S, Vb *big.Int) (common.Address, error
 	// recover the public key from the snature
 	//pub, err := crypto.Ecrecover(sighash[:], sig)
 	//64 bytes public key returned.
-	pub, err := BOE.BoeGetInstance().ValidateSign(sighash[:],r,s,V)
+	pub, err := BOE.BoeGetInstance().ValidateSign(sighash[:], r, s, V)
 	//xInt, yInt := elliptic.Unmarshal(crypto.S256(), result)
 	//pub := &ecdsa.PublicKey{Curve: crypto.S256(), X: xInt, Y: yInt}
 	if err != nil {
 		return common.Address{}, err
 	}
-	if len(pub) == 0 { 	//|| pub[0] != 4
+	if len(pub) == 0 { //|| pub[0] != 4
 		return common.Address{}, errors.New("invalid public key")
 	}
 	var addr common.Address

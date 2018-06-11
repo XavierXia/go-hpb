@@ -20,19 +20,17 @@ import (
 	"fmt"
 )
 
-
 // hpb protocol version control
 const (
-	ProtocolV111 uint    = 111 // match up protocol versions and messages versions
+	ProtocolV111    uint = 111 // match up protocol versions and messages versions
 	SubProtocolV111 uint = 111 // Light Hpb Sub-protocol versions
 )
 const (
-	VersionMajor = 0        // Major version component of the current release
-	VersionMinor = 0        // Minor version component of the current release
-	VersionPatch = 16        // Patch version component of the current release
+	VersionMajor = 0     // Major version component of the current release
+	VersionMinor = 0     // Minor version component of the current release
+	VersionPatch = 16    // Patch version component of the current release
 	VersionMeta  = "dev" // Version metadata to append to the version string
 )
-
 
 // Version holds the textual version string.
 var Version = func() string {

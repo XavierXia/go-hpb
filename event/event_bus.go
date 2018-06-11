@@ -1,8 +1,8 @@
 package event
 
 import (
-	"github.com/orcaman/concurrent-map"
 	"github.com/AsynkronIT/protoactor-go/actor"
+	"github.com/orcaman/concurrent-map"
 )
 
 type Event struct {
@@ -22,7 +22,7 @@ func RegisterReceiver(name string, fn func(payload interface{})) Receiver {
 }
 
 func RegisterTrigger(name string) Trigger {
-	trigger,_ := actor.SpawnNamed(actor.FromFunc(func(context actor.Context) {}),name)
+	trigger, _ := actor.SpawnNamed(actor.FromFunc(func(context actor.Context) {}), name)
 	return trigger
 }
 

@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/hpb-project/go-hpb/common"
-	"github.com/hpb-project/go-hpb/blockchain/storage"
+	"github.com/hpb-project/go-hpb/storage"
 )
 
 var addr = common.BytesToAddress([]byte("test"))

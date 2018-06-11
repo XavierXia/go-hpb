@@ -20,14 +20,15 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/hpb-project/ghpb/common"
-	"github.com/hpb-project/ghpb/core/state"
-	"github.com/hpb-project/ghpb/storage"
-	"github.com/hpb-project/ghpb/common/constant"
-	"github.com/hpb-project/go-hpb/types"
-	"github.com/hpb-project/go-hpb/hvm"
+	"github.com/hpb-project/go-hpb/common"
+	"github.com/hpb-project/go-hpb/config"
 	"github.com/hpb-project/go-hpb/consensus/solo"
+	"github.com/hpb-project/go-hpb/hvm"
+	"github.com/hpb-project/go-hpb/storage"
+	"github.com/hpb-project/go-hpb/storage/state"
+	"github.com/hpb-project/go-hpb/types"
 )
+
 // So we can deterministically seed different blockchains
 var (
 	canonicalSeed = 1
@@ -48,7 +49,7 @@ type BlockGen struct {
 	receipts []*types.Receipt
 	uncles   []*types.Header
 
-	config *params.ChainConfig
+	config *config.ChainConfig
 }
 
 // SetCoinbase sets the coinbase of the generated block.
@@ -154,13 +155,13 @@ func (b *BlockGen) OffsetTime(seconds int64) {
 // Blocks created by GenerateChain do not contain valid proof of work
 // values. Inserting them into BlockChain requires use of FakePow or
 // a similar non-validating proof of work implementation.
-func GenerateChain(config *params.ChainConfig, parent *types.Block, db hpbdb.Database, n int, gen func(int, *BlockGen)) ([]*types.Block, []types.Receipts) {
-	if config == nil {
-		config = params.TestnetChainConfig
+func GenerateChain(cfg *config.ChainConfig, parent *types.Block, db hpbdb.Database, n int, gen func(int, *BlockGen)) ([]*types.Block, []types.Receipts) {
+	if cfg == nil {
+		cfg = config.MainnetChainConfig
 	}
 	blocks, receipts := make(types.Blocks, n), make([]types.Receipts, n)
 	genblock := func(i int, h *types.Header, statedb *state.StateDB) (*types.Block, types.Receipts) {
-		b := &BlockGen{parent: parent, i: i, chain: blocks, header: h, statedb: statedb, config: config}
+		b := &BlockGen{parent: parent, i: i, chain: blocks, header: h, statedb: statedb, config: cfg}
 		// Execute any user modifications to the block and finalize it
 		if gen != nil {
 			gen(i, b)
@@ -178,7 +179,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, db hpbdb.Dat
 		if err != nil {
 			panic(err)
 		}
-		header := makeHeader(config, parent, statedb)
+		header := makeHeader(cfg, parent, statedb)
 		block, receipt := genblock(i, header, statedb)
 		blocks[i] = block
 		receipts[i] = receipt
@@ -187,7 +188,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, db hpbdb.Dat
 	return blocks, receipts
 }
 
-func makeHeader(config *params.ChainConfig, parent *types.Block, state *state.StateDB) *types.Header {
+func makeHeader(config *config.ChainConfig, parent *types.Block, state *state.StateDB) *types.Header {
 	var time *big.Int
 	if parent.Time() == nil {
 		time = big.NewInt(10)
@@ -200,10 +201,10 @@ func makeHeader(config *params.ChainConfig, parent *types.Block, state *state.St
 		ParentHash: parent.Hash(),
 		Coinbase:   parent.Coinbase(),
 		Difficulty: big.NewInt(3),
-		GasLimit: CalcGasLimit(parent),
-		GasUsed:  new(big.Int),
-		Number:   new(big.Int).Add(parent.Number(), common.Big1),
-		Time:     time,
+		GasLimit:   CalcGasLimit(parent),
+		GasUsed:    new(big.Int),
+		Number:     new(big.Int).Add(parent.Number(), common.Big1),
+		Time:       time,
 	}
 }
 
@@ -216,7 +217,7 @@ func newCanonical(n int, full bool) (hpbdb.Database, *BlockChain, error) {
 	db, _ := hpbdb.NewMemDatabase()
 	genesis := gspec.MustCommit(db)
 
-	blockchain, _ := NewBlockChain(db, params.TestnetChainConfig, solo.New())
+	blockchain, _ := NewBlockChain(db, config.TestnetChainConfig, solo.New())
 	// Create and inject the requested chain
 	if n == 0 {
 		return db, blockchain, nil
@@ -245,7 +246,7 @@ func makeHeaderChain(parent *types.Header, n int, db hpbdb.Database, seed int) [
 
 // makeBlockChain creates a deterministic chain of blocks rooted at parent.
 func makeBlockChain(parent *types.Block, n int, db hpbdb.Database, seed int) []*types.Block {
-	blocks, _ := GenerateChain(params.TestnetChainConfig, parent, db, n, func(i int, b *BlockGen) {
+	blocks, _ := GenerateChain(config.TestnetChainConfig, parent, db, n, func(i int, b *BlockGen) {
 		b.SetCoinbase(common.Address{0: byte(seed), 19: byte(i)})
 	})
 	return blocks
