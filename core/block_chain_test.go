@@ -38,22 +38,23 @@ func TestApplyTx(t *testing.T) {
 			tx      *types.Transaction
 			err     error
 			basicTx = func(signer types.Signer) (*types.Transaction, error) {
-				//tx, _ := types.SignTx(types.NewContractCreation(block.TxNonce(address),new(big.Int), big.NewInt(100000),new(big.Int), code), signer, key)
-				tx := types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil)
-				tx.SetFrom(address)
+				tx, _ := types.SignTx(types.NewContractCreation(block.TxNonce(address),new(big.Int), big.NewInt(100000),new(big.Int), code), signer, key)
+				//tx ,_:= types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil),signer,key)
+				//tx.SetFrom(address)
 				return tx, nil
 			}
 			_ = func(signer types.Signer) (*types.Transaction, error) {
 				tx, _ := types.SignTx(types.NewContractCreation(block.TxNonce(address), new(big.Int), big.NewInt(100000), new(big.Int), code), signer, key)
 				//tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), big.NewInt(21000), new(big.Int), nil), signer, key)
-				tx.SetFrom(address)
+				//tx.SetFrom(address)
 				return tx, nil
 			}
 			//testContractAddr = crypto.CreateAddress(acc1Addr, nonce)
 		)
 		//var txSlice = make([]*types.Transaction,0,10000)
-		for i = 0; i < 50000; i++ {
-			tx, err = basicTx(types.NewBoeSigner(gspec.Config.ChainId))
+		s := types.NewBoeSigner(gspec.Config.ChainId)
+		for i = 0; i < 25; i++ {
+			tx, err = basicTx(s)
 			if err != nil {
 				t.Fatal(err)
 			}

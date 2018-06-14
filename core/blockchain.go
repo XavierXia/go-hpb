@@ -28,8 +28,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/golang-lru"
-	"github.com/hpb-project/ghpb/core/event"
-	"github.com/hpb-project/ghpb/metrics"
+	//"github.com/hpb-project/ghpb/core/event"
+	"github.com/hpb-project/go-hpb/common/metrics"
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/crypto"
 	"github.com/hpb-project/go-hpb/common/log"
@@ -41,11 +41,14 @@ import (
 	"github.com/hpb-project/go-hpb/storage"
 	"github.com/hpb-project/go-hpb/storage/state"
 	"github.com/hpb-project/go-hpb/types"
+	"github.com/hpb-project/go-hpb/consensus/solo"
+	"github.com/hpb-project/go-hpb/event"
 )
 
 var (
 	blockInsertTimer = metrics.NewTimer("chain/inserts")
-
+	reentryMux sync.Mutex
+	singletonInstance *BlockChain
 	ErrNoGenesis = errors.New("Genesis not found in chain")
 )
 
@@ -79,12 +82,11 @@ type BlockChain struct {
 
 	hc            *HeaderChain
 	chainDb       hpbdb.Database
-	rmLogsFeed    event.Feed
-	chainFeed     event.Feed
-	chainSideFeed event.Feed
-	chainHeadFeed event.Feed
-	logsFeed      event.Feed
-	scope         event.SubscriptionScope
+	rmLogsFeed    *event.Trigger
+	chainFeed     *event.Trigger
+	chainSideFeed *event.Trigger
+	chainHeadFeed *event.Trigger
+	logsFeed      *event.Trigger
 	genesisBlock  *types.Block
 
 	mu      sync.RWMutex // global mutex for locking chain operations
@@ -115,6 +117,20 @@ type BlockChain struct {
 	badBlocks *lru.Cache // Bad block cache
 }
 
+// InstanceBlockChain returns the singleton of BlockChain.
+func InstanceBlockChain() (*BlockChain) {
+	if nil == singletonInstance {
+		reentryMux.Lock()
+		if  nil == singletonInstance {
+			// todo for merge
+			singletonInstance, _ = NewBlockChain(hpbdb.ChainDbInstance(), config.DefaultBlockChainConfig, solo.New())
+		}
+		reentryMux.Unlock()
+	}
+
+	return singletonInstance
+}
+
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Hpb Validator and
 // Processor.
@@ -124,6 +140,9 @@ func NewBlockChain(chainDb hpbdb.Database, config *config.ChainConfig, engine co
 	blockCache, _ := lru.New(blockCacheLimit)
 	futureBlocks, _ := lru.New(maxFutureBlocks)
 	badBlocks, _ := lru.New(badBlockLimit)
+
+	//init event bus
+
 
 	bc := &BlockChain{
 		config:       config,
@@ -137,6 +156,11 @@ func NewBlockChain(chainDb hpbdb.Database, config *config.ChainConfig, engine co
 		engine:       engine,
 		//vmConfig:     vmConfig,
 		badBlocks: badBlocks,
+		rmLogsFeed : event.RegisterTrigger("blockchain_rm_logs_publisher"),
+		chainFeed  : event.RegisterTrigger("blockchain_chain_publisher"),
+		chainSideFeed : event.RegisterTrigger("blockchain_chain_side_publisher"),
+		chainHeadFeed : event.RegisterTrigger("blockchain_chain_head_publisher"),
+		logsFeed  : event.RegisterTrigger("blockchain_logs_publisher"),
 	}
 	bc.SetValidator(NewBlockValidator(config, bc, engine))
 	bc.SetProcessor(NewStateProcessor(config, bc, engine))
@@ -587,7 +611,8 @@ func (bc *BlockChain) Stop() {
 		return
 	}
 	// Unsubscribe all subscriptions registered from blockchain
-	bc.scope.Close()
+	//bc.scope.Close()
+	//bc.chainSideFeed.
 	close(bc.quit)
 	atomic.StoreInt32(&bc.procInterrupt, 1)
 
@@ -972,7 +997,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 
 			coalescedLogs = append(coalescedLogs, logs...)
 			blockInsertTimer.UpdateSince(bstart)
-			events = append(events, ChainEvent{block, block.Hash(), logs})
+			events = append(events, event.ChainEvent{Block:block, Hash:block.Hash(), Logs:logs})
 			lastCanon = block
 
 		case SideStatTy:
@@ -980,7 +1005,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 				common.PrettyDuration(time.Since(bstart)), "txs", len(block.Transactions()), "gas", block.GasUsed(), "uncles", len(block.Uncles()))
 
 			blockInsertTimer.UpdateSince(bstart)
-			events = append(events, ChainSideEvent{block})
+			events = append(events, event.ChainSideEvent{Block:block})
 		}
 		stats.processed++
 		stats.usedGas += usedGas.Uint64()
@@ -989,7 +1014,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 
 	// Append a single chain head event if we've progressed the chain
 	if lastCanon != nil && bc.LastBlockHash() == lastCanon.Hash() {
-		events = append(events, ChainHeadEvent{lastCanon})
+		events = append(events, event.ChainHeadEvent{Message:lastCanon})
 	}
 	return 0, events, coalescedLogs, nil
 }
@@ -1142,12 +1167,12 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 		DeleteTxLookupEntry(bc.chainDb, tx.Hash())
 	}
 	if len(deletedLogs) > 0 {
-		go bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
+		event.FireEvent(&event.Event{Trigger: bc.rmLogsFeed, Payload: event.RemovedLogsEvent{deletedLogs}, Topic: event.RemovedLogsTopic})
 	}
 	if len(oldChain) > 0 {
 		go func() {
 			for _, block := range oldChain {
-				bc.chainSideFeed.Send(ChainSideEvent{Block: block})
+				event.FireEvent(&event.Event{Trigger: bc.chainSideFeed, Payload: event.ChainSideEvent{block}, Topic: event.ChainSideTopic})
 			}
 		}()
 	}
@@ -1161,18 +1186,16 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 func (bc *BlockChain) PostChainEvents(events []interface{}, logs []*types.Log) {
 	// post event logs for further processing
 	if logs != nil {
-		bc.logsFeed.Send(logs)
+		event.FireEvent(&event.Event{Trigger: bc.logsFeed, Payload: event.LogsEvent{logs}, Topic: event.LogTopic})
 	}
-	for _, event := range events {
-		switch ev := event.(type) {
-		case ChainEvent:
-			bc.chainFeed.Send(ev)
-
-		case ChainHeadEvent:
-			bc.chainHeadFeed.Send(ev)
-
-		case ChainSideEvent:
-			bc.chainSideFeed.Send(ev)
+	for _, evt := range events {
+		switch ev := evt.(type) {
+		case event.ChainEvent:
+			event.FireEvent(&event.Event{Trigger: bc.chainFeed, Payload: ev, Topic: event.ChainEventTopic})
+		case  event.ChainHeadEvent:
+			event.FireEvent(&event.Event{Trigger: bc.chainHeadFeed, Payload: ev, Topic: event.ChainHeadTopic})
+		case  event.ChainSideEvent:
+			event.FireEvent(&event.Event{Trigger: bc.chainSideFeed, Payload: ev, Topic: event.ChainSideTopic})
 		}
 	}
 }
@@ -1349,26 +1372,76 @@ func (bc *BlockChain) Config() *config.ChainConfig { return bc.config }
 func (bc *BlockChain) Engine() consensus.Engine { return bc.engine }
 
 // SubscribeRemovedLogsEvent registers a subscription of RemovedLogsEvent.
-func (bc *BlockChain) SubscribeRemovedLogsEvent(ch chan<- RemovedLogsEvent) event.Subscription {
-	return bc.scope.Track(bc.rmLogsFeed.Subscribe(ch))
+func (bc *BlockChain) SubscribeRemovedLogsEvent(name string, ch chan<- event.RemovedLogsEvent) *event.Receiver {
+	removedLogsReceiver := event.RegisterReceiver(name,
+		func(payload interface{}) {
+			switch msg := payload.(type) {
+			case event.RemovedLogsEvent:
+				ch <- msg
+			default:
+				log.Warn("SubscribeRemovedLogsEvent get Unknown msg")
+			}
+		})
+	event.Subscribe(removedLogsReceiver, event.RemovedLogsTopic)
+	return removedLogsReceiver
 }
 
 // SubscribeChainEvent registers a subscription of ChainEvent.
-func (bc *BlockChain) SubscribeChainEvent(ch chan<- ChainEvent) event.Subscription {
-	return bc.scope.Track(bc.chainFeed.Subscribe(ch))
+func (bc *BlockChain) SubscribeChainEvent(name string, ch chan<- event.ChainEvent) *event.Receiver {
+	chainEventReceiver := event.RegisterReceiver(name,
+		func(payload interface{}) {
+			switch msg := payload.(type) {
+			case event.ChainEvent:
+				ch <- msg
+			default:
+				log.Warn("SubscribeChainEvent get Unknown msg")
+			}
+		})
+	event.Subscribe(chainEventReceiver, event.ChainEventTopic)
+	return chainEventReceiver
 }
 
 // SubscribeChainHeadEvent registers a subscription of ChainHeadEvent.
-func (bc *BlockChain) SubscribeChainHeadEvent(ch chan<- ChainHeadEvent) event.Subscription {
-	return bc.scope.Track(bc.chainHeadFeed.Subscribe(ch))
+func (bc *BlockChain) SubscribeChainHeadEvent(name string,ch chan<- event.ChainHeadEvent) *event.Receiver {
+	chainHeadEventReceiver := event.RegisterReceiver(name,
+		func(payload interface{}) {
+			switch msg := payload.(type) {
+			case event.ChainHeadEvent:
+				ch <- msg
+			default:
+				log.Warn("SubscribeChainHeadEvent get Unknown msg")
+			}
+		})
+	event.Subscribe(chainHeadEventReceiver, event.ChainHeadTopic)
+	return chainHeadEventReceiver
 }
 
 // SubscribeChainSideEvent registers a subscription of ChainSideEvent.
-func (bc *BlockChain) SubscribeChainSideEvent(ch chan<- ChainSideEvent) event.Subscription {
-	return bc.scope.Track(bc.chainSideFeed.Subscribe(ch))
+func (bc *BlockChain) SubscribeChainSideEvent(name string,ch chan<-event.ChainSideEvent) *event.Receiver {
+	chainSideEventReceiver := event.RegisterReceiver(name,
+		func(payload interface{}) {
+			switch msg := payload.(type) {
+			case event.ChainSideEvent:
+				ch <- msg
+			default:
+				log.Warn("SubscribeChainSideEvent get Unknown msg")
+			}
+		})
+	event.Subscribe(chainSideEventReceiver, event.ChainSideTopic)
+	return chainSideEventReceiver
 }
 
 // SubscribeLogsEvent registers a subscription of []*types.Log.
-func (bc *BlockChain) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return bc.scope.Track(bc.logsFeed.Subscribe(ch))
+func (bc *BlockChain) SubscribeLogsEvent(name string,ch chan<- event.LogsEvent) *event.Receiver {
+	logEventReceiver := event.RegisterReceiver(name,
+		func(payload interface{}) {
+			switch msg := payload.(type) {
+			case event.LogsEvent:
+				ch <- msg
+			default:
+				log.Warn("SubscribeLogsEvent get Unknown msg")
+			}
+		})
+	event.Subscribe(logEventReceiver, event.LogTopic)
+	return logEventReceiver
 }

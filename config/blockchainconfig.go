@@ -142,7 +142,7 @@ type ChainConfig struct {
 	Prometheus *PrometheusConfig `json:"prometheus,omitempty"`
 }
 
-var DefaultBlockChainConfig = ChainConfig{
+var DefaultBlockChainConfig = &ChainConfig{
 	ChainId:    MainnetChainConfig.ChainId,
 	Prometheus: DefaultPrometheusConfig,
 }

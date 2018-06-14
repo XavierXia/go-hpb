@@ -31,6 +31,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	gometrics "github.com/rcrowley/go-metrics"
+	"io/ioutil"
+	"fmt"
 )
 
 var OpenFileLimit = 64
@@ -53,6 +55,18 @@ type LDBDatabase struct {
 	quitChan chan chan error // Quit channel to stop the metrics collection before closing the database
 
 	log log.Logger // Contextual logger tracking the database path
+}
+
+func ChainDbInstance() (*LDBDatabase){
+	dir, err := ioutil.TempDir("", "trie-bench")
+	if err != nil {
+		panic(fmt.Sprintf("can't create temporary directory: %v", err))
+	}
+	db, err := NewLDBDatabase(dir, 256, 0)
+	if err != nil {
+		panic(fmt.Sprintf("can't create temporary database: %v", err))
+	}
+	return db
 }
 
 // NewLDBDatabase returns a LevelDB wrapped object.
