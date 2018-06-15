@@ -29,6 +29,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"github.com/hpb-project/go-hpb/core"
 )
 
 type fastSync struct {
@@ -344,7 +345,7 @@ func (this *fastSync) findAncestor(p *peerConnection, height uint64) (uint64, er
 	floor, ceil := int64(-1), this.syncer.lightchain.CurrentHeader().Number.Uint64()
 
 	p.log.Debug("Looking for common ancestor", "local", ceil, "remote", height)
-	ceil = bc.InstanceBlockChain().CurrentFastBlock().NumberU64()
+	ceil = core.InstanceBlockChain().CurrentFastBlock().NumberU64()
 	if ceil >= MaxForkAncestry {
 		floor = int64(ceil - MaxForkAncestry)
 	}
@@ -895,12 +896,12 @@ func (this *fastSync) processHeaders(origin uint64, td *big.Int) error {
 			}
 			lastHeader, lastFastBlock, lastBlock :=
 				this.syncer.lightchain.CurrentHeader().Number, common.Big0, common.Big0
-			lastFastBlock = bc.InstanceBlockChain().CurrentFastBlock().Number()
-			lastBlock = bc.InstanceBlockChain().CurrentBlock().Number()
+			lastFastBlock = core.InstanceBlockChain().CurrentFastBlock().Number()
+			lastBlock = core.InstanceBlockChain().CurrentBlock().Number()
 			this.syncer.lightchain.Rollback(hashes)
 			curFastBlock, curBlock := common.Big0, common.Big0
-			curFastBlock = bc.InstanceBlockChain().CurrentFastBlock().Number()
-			curBlock = bc.InstanceBlockChain().CurrentBlock().Number()
+			curFastBlock = core.InstanceBlockChain().CurrentFastBlock().Number()
+			curBlock = core.InstanceBlockChain().CurrentBlock().Number()
 			log.Warn("Rolled back headers", "count", len(hashes),
 				"header", fmt.Sprintf("%d->%d", lastHeader, this.syncer.lightchain.CurrentHeader().Number),
 				"fast", fmt.Sprintf("%d->%d", lastFastBlock, curFastBlock),
@@ -951,7 +952,7 @@ func (this *fastSync) processHeaders(origin uint64, td *big.Int) error {
 				// L: Sync begins, and finds common ancestor at 11
 				// L: Request new headers up from 11 (R's TD was higher, it must have something)
 				// R: Nothing to give
-				if !gotHeaders && td.Cmp(bc.InstanceBlockChain().GetTdByHash(bc.InstanceBlockChain().CurrentBlock().Hash())) > 0 {
+				if !gotHeaders && td.Cmp(core.InstanceBlockChain().GetTdByHash(core.InstanceBlockChain().CurrentBlock().Hash())) > 0 {
 					return errStallingPeer
 				}
 				// If fast or light syncing, ensure promised headers are indeed delivered. This is
@@ -1066,7 +1067,7 @@ func (this *fastSync) importBlockResults(results []*fetchResult) error {
 		for i, result := range results[:items] {
 			blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
 		}
-		if index, err := bc.InstanceBlockChain().InsertChain(blocks); err != nil {
+		if index, err := core.InstanceBlockChain().InsertChain(blocks); err != nil {
 			log.Debug("fast synced item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 			return errInvalidChain
 		}
@@ -1154,7 +1155,7 @@ func (this *fastSync) commitFastSyncData(results []*fetchResult, stateSync *stat
 			blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
 			receipts[i] = result.Receipts
 		}
-		if index, err := bc.InstanceBlockChain().InsertReceiptChain(blocks, receipts); err != nil {
+		if index, err := core.InstanceBlockChain().InsertReceiptChain(blocks, receipts); err != nil {
 			log.Debug("fast synced item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 			return errInvalidChain
 		}
@@ -1172,10 +1173,10 @@ func (this *fastSync) commitPivotBlock(result *fetchResult) error {
 		return err
 	}
 	log.Debug("Committing fast sync pivot as new head", "number", b.Number(), "hash", b.Hash())
-	if _, err := bc.InstanceBlockChain().InsertReceiptChain([]*types.Block{b}, []types.Receipts{result.Receipts}); err != nil {
+	if _, err := core.InstanceBlockChain().InsertReceiptChain([]*types.Block{b}, []types.Receipts{result.Receipts}); err != nil {
 		return err
 	}
-	return bc.InstanceBlockChain().FastSyncCommitHead(b.Hash())
+	return core.InstanceBlockChain().FastSyncCommitHead(b.Hash())
 }
 
 // deliver injects a new batch of data received from a remote node.
