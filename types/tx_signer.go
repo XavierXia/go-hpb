@@ -25,7 +25,6 @@ import (
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/crypto"
 	"github.com/hpb-project/go-hpb/config"
-	"github.com/hpb-project/go-hpb/boe"
 )
 
 var (
@@ -163,30 +162,54 @@ func (s BoeSigner) Hash(tx *Transaction) common.Hash {
 }
 
 func recoverPlain(sighash common.Hash, R, S, Vb *big.Int) (common.Address, error) {
+	//if Vb.BitLen() > 8 {
+	//	return common.Address{}, ErrInvalidSig
+	//}
+	//V := byte(Vb.Uint64() - 27)
+	////TODO replace homestead param
+	//if !crypto.ValidateSignatureValues(V, R, S, true) {
+	//	return common.Address{}, ErrInvalidSig
+	//}
+	//// encode the snature in uncompressed format
+	//r, s := R.Bytes(), S.Bytes()
+	//// recover the public key from the snature
+	////pub, err := crypto.Ecrecover(sighash[:], sig)
+	////64 bytes public key returned.
+	//pub, err := boe.BoeGetInstance().ValidateSign(sighash[:], r, s, V)
+	////xInt, yInt := elliptic.Unmarshal(crypto.S256(), result)
+	////pub := &ecdsa.PublicKey{Curve: crypto.S256(), X: xInt, Y: yInt}
+	//if err != nil {
+	//	return common.Address{}, err
+	//}
+	//if len(pub) == 0 { //|| pub[0] != 4
+	//	return common.Address{}, errors.New("invalid public key")
+	//}
+	//var addr common.Address
+	//copy(addr[:], crypto.Keccak256(pub[0:])[12:])
+	//return addr, nil
 	if Vb.BitLen() > 8 {
 		return common.Address{}, ErrInvalidSig
 	}
 	V := byte(Vb.Uint64() - 27)
-	//TODO replace homestead param
 	if !crypto.ValidateSignatureValues(V, R, S, true) {
 		return common.Address{}, ErrInvalidSig
 	}
 	// encode the snature in uncompressed format
 	r, s := R.Bytes(), S.Bytes()
+	sig := make([]byte, 65)
+	copy(sig[32-len(r):32], r)
+	copy(sig[64-len(s):64], s)
+	sig[64] = V
 	// recover the public key from the snature
-	//pub, err := crypto.Ecrecover(sighash[:], sig)
-	//64 bytes public key returned.
-	pub, err := boe.BoeGetInstance().ValidateSign(sighash[:], r, s, V)
-	//xInt, yInt := elliptic.Unmarshal(crypto.S256(), result)
-	//pub := &ecdsa.PublicKey{Curve: crypto.S256(), X: xInt, Y: yInt}
+	pub, err := crypto.Ecrecover(sighash[:], sig)
 	if err != nil {
 		return common.Address{}, err
 	}
-	if len(pub) == 0 { //|| pub[0] != 4
+	if len(pub) == 0 || pub[0] != 4 {
 		return common.Address{}, errors.New("invalid public key")
 	}
 	var addr common.Address
-	copy(addr[:], crypto.Keccak256(pub[0:])[12:])
+	copy(addr[:], crypto.Keccak256(pub[1:])[12:])
 	return addr, nil
 }
 
