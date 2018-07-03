@@ -110,7 +110,8 @@ func NewEventSystem(mux *sub.TypeMux, backend Backend, lightMode bool) *EventSys
 		uninstall: make(chan *subscription),
 	}
 
-	go m.eventLoop()
+	//TODO shanlin
+	//go m.eventLoop()
 
 	return m
 }
@@ -397,7 +398,9 @@ func (es *EventSystem) lightFilterLogs(header *types.Header, addresses []common.
 func (es *EventSystem) eventLoop() {
 	var (
 		index = make(filterIndex)
-		subs   = es.mux.Subscribe(bc.PendingLogsEvent{})
+		//TODO shanlin
+		//subs   = es.mux.Subscribe(bc.PendingLogsEvent{})
+
 		// Subscribe TxPreEvent form txpool
 		txCh  = make(chan bc.TxPreEvent, txChanSize)
 		txSub = es.backend.SubscribeTxPreEvent(txCh)
@@ -413,7 +416,9 @@ func (es *EventSystem) eventLoop() {
 	)
 
 	// Unsubscribe all events
-	defer subs.Unsubscribe()
+	//TODO shanlin
+	//defer subs.Unsubscribe()
+
 	defer txSub.Unsubscribe()
 	defer rmLogsSub.Unsubscribe()
 	defer logsSub.Unsubscribe()
@@ -425,11 +430,12 @@ func (es *EventSystem) eventLoop() {
 
 	for {
 		select {
-		case ev, active := <-subs.Chan():
-			if !active { // system stopped
-				return
-			}
-			es.broadcast(index, ev)
+		//TODO shanlin
+		//case ev, active := <-subs.Chan():
+		//	if !active { // system stopped
+		//		return
+		//	}
+		//	es.broadcast(index, ev)
 
 		// Handle subscribed events
 		case ev := <-txCh:

@@ -157,7 +157,9 @@ func newWorker(config *config.ChainConfig, engine consensus.Engine, coinbase com
 	// Subscribe events for blockchain
 	worker.chainHeadSub = bc.InstanceBlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
 	worker.chainSideSub = bc.InstanceBlockChain().SubscribeChainSideEvent(worker.chainSideCh)
-	go worker.update()
+
+	//TODO rujia
+	//go worker.update()
 
 	go worker.wait()
 	worker.commitNewWork()

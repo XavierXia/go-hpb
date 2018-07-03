@@ -231,7 +231,9 @@ func (hpnode *Node) Start(conf  *config.HpbConfig) (error){
 		log.Error("Start hpbpeermanager error")
 		return errors.New(`start peermanager error ".ipc"`)
 	}
-	hpnode.Hpbsyncctr.Start()
+
+	//hpnode.Hpbsyncctr.Start()
+
 	return nil
 
 }
@@ -357,10 +359,11 @@ func (n *Node) Restart() error {
 }
 
 // Attach creates an RPC client attached to an in-process API handler.
-func (n *Node) Attach() (*rpc.Client, error) {
+func (n *Node) Attach(ipc *rpc.Server) (*rpc.Client, error) {
 	n.lock.RLock()
 	defer n.lock.RUnlock()
 
+	n.inprocHandler =ipc
 	return rpc.DialInProc(n.inprocHandler), nil
 }
 

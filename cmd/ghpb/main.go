@@ -26,7 +26,7 @@ import (
 	"time" 
 
 	"github.com/hpb-project/go-hpb/account"
-	"github.com/hpb-project/go-hpb/account/keystore"
+	//"github.com/hpb-project/go-hpb/account/keystore"
 	"github.com/hpb-project/go-hpb/cmd/utils"
 	"github.com/hpb-project/go-hpb/common"
 	"github.com/hpb-project/go-hpb/common/console"
@@ -207,27 +207,27 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 	utils.StartNode(stack)
 
 	// Unlock any account specifically requested
-	ks := stack.AccountManager().KeyStore().(*keystore.KeyStore)
+	//ks := stack.AccountManager().KeyStore().(*keystore.KeyStore)
 
 	passwords := utils.MakePasswordList(ctx)
 	unlocks := strings.Split(ctx.GlobalString(utils.UnlockedAccountFlag.Name), ",")
 	for i, account := range unlocks {
 		if trimmed := strings.TrimSpace(account); trimmed != "" {
-			unlockAccount(ctx, ks, trimmed, i, passwords)
+			unlockAccount(ctx, nil, trimmed, i, passwords)
 		}
 	}
 	// Register wallet event handlers to open and auto-derive wallets
 	events := make(chan accounts.WalletEvent, 16)
-	stack.AccountManager().Subscribe(events)
+	//stack.AccountManager().Subscribe(events)
 
 	go func() {
 
 		// Open any wallets already attached
-		for _, wallet := range stack.AccountManager().Wallets() {
-			if err := wallet.Open(""); err != nil {
-				log.Warn("Failed to open wallet", "url", wallet.URL(), "err", err)
-			}
-		}
+		//for _, wallet := range stack.AccountManager().Wallets() {
+		//	if err := wallet.Open(""); err != nil {
+		//		log.Warn("Failed to open wallet", "url", wallet.URL(), "err", err)
+		//	}
+		//}
 		// Listen for wallet event till termination
 		for event := range events {
 			switch event.Kind {

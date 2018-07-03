@@ -123,8 +123,7 @@ func (prm *PeerManager)Start() error {
 		return errIncomplete
 	}
 
-	prm.server = &Server{
-		Config: Config{
+	prm.server.Config = Config{
 			PrivateKey: config.Network.PrivateKey,
 			MaxPendingPeers: config.Network.MaxPendingPeers,
 			Name: config.Network.Name,
@@ -142,8 +141,8 @@ func (prm *PeerManager)Start() error {
 
 			NetworkId: config.Node.NetworkId,
 			Protocols: prm.hpb.Protocols(),
-		},
 	}
+
 	prm.hpb.networkId = config.Node.NetworkId
 	copy(prm.server.Protocols, prm.hpb.Protocols())
 
@@ -188,9 +187,11 @@ func (prm *PeerManager)Stop(){
 
 }
 
+func (prm *PeerManager)P2pSvr() *Server {
+	return prm.server
+}
 
-
-func (prm *PeerManager)IpcSvr() *rpc.Server {
+func (prm *PeerManager)IpcHandle() *rpc.Server {
 	return prm.rpc.inprocHandler
 }
 

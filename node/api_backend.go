@@ -186,15 +186,21 @@ func (b *HpbApiBackend) SuggestPrice(ctx context.Context) (*big.Int, error) {
 }
 
 func (b *HpbApiBackend) ChainDb() hpbdb.Database {
-	return b.hpb.ChainDb()
+	return nil
+	//TODO shanlin
+	//return b.hpb.ChainDb()
 }
 
 func (b *HpbApiBackend) EventMux() *sub.TypeMux {
-	return b.hpb.EventMux()
+	return nil
+	//TODO shanlin
+	//return b.hpb.EventMux()
 }
 
 func (b *HpbApiBackend) AccountManager() *accounts.Manager {
-	return b.hpb.AccountManager()
+	return nil
+	//TODO shanlin
+	//return b.hpb.AccountManager()
 }
 
 func (b *HpbApiBackend) BloomStatus() (uint64, uint64) {
